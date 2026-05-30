@@ -17,6 +17,13 @@ export const UIX_COMPONENT_TYPES = [
   "Toggle",
   "Knob",
   "Popup",
+  // Marks the editable content container of a popup dialog (the card the user
+  // arranges elements inside). Absolute-positioned (no layout component) so it
+  // gets full side-by-side snap dragging. At export its children are lowered
+  // into the Active=false modal sub-tree. PopupDismiss marks the child button
+  // that closes the modal so the exporter can wire its Active-toggle.
+  "PopupContent",
+  "PopupDismiss",
   "Slider",
   "ProgressBar",
   "Radio",

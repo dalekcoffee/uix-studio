@@ -8,16 +8,22 @@ import { computeAbsoluteRect, isLayoutManaged, rectToOffsets } from "./render/sl
 import {
   computeDrop,
   containerRows,
+  detectColumnDrop,
   findContainer,
   getContainers,
   groupRows,
+  inferSideMargin,
   planFlow,
+  memberMinWidth,
+  rowFitsSideBySide,
   rowItemsOf,
   rowsWithout,
+  TALL_FACTOR,
   type DropSpec,
   type SnapContainer,
   type SnapRow,
 } from "./render/snapFlow";
+import { contentMinWidth } from "./render/contentMin";
 import { dragController } from "./dragController";
 import { DRAG_GLIDE } from "./render/renderSlot";
 
@@ -90,6 +96,16 @@ interface FlowState {
   // dead space WITHOUT reordering (canvas-space target rect). Cleared the
   // moment a genuine reorder happens. Committed (with anchor pinning) on drop.
   nudgeRect: Rect | null;
+  // Set while the cursor is over a side-by-side merge that was REJECTED for lack
+  // of room (kept stacked instead). Read on drop to offer "widen panel to fit".
+  widenContext: { rowIds: string[]; draggedIds: string[]; containerId: string } | null;
+  // Per-id CONTENT-based minimum widths for this container's members, captured at
+  // drag start. Drives the feasibility gate + dead-space trimming so roomy
+  // canvases pack side-by-side instead of refusing. See contentMinWidth.
+  minWidths: Record<string, number>;
+  // Set while the cursor is in the dead space beside a TALL element — drop will
+  // stack the dragged element into a vertical column with the short member(s).
+  columnPending: { shortIds: string[]; place: "top" | "bottom" } | null;
 }
 
 interface DragState {
@@ -130,6 +146,31 @@ interface Grip {
   rect: Rect; // canvas-space span the grip covers
   nested: boolean; // purple when true (a nested container's inner row grip)
   railX: number;
+}
+
+// Which popup card (if any) is currently being edited, plus every popup card in
+// the document. A popup's content card is a Canvas-root child carrying a
+// PopupContent component; it renders only as a centered overlay WHILE its popup
+// is being edited (see PopupEditOverlay), and is hidden otherwise. The snap
+// engine, however, registers it as a nested container regardless — so without
+// scoping, its child grips pile onto the same left rail as the main canvas's
+// grips and the two interleave (the "overlapping grabber" problem). We keep grip
+// visibility in lockstep with what's actually drawn.
+interface PopupScope {
+  cardIds: string[];
+  activeCardId: string | null;
+}
+
+// Should a container's grips be shown given the current popup-edit scope?
+//  - no popups in the doc        → always (unchanged behaviour)
+//  - editing a popup             → only containers inside THAT card
+//  - not editing any popup       → everything EXCEPT popup-card subtrees
+function gripInScope(root: Slot, scope: PopupScope, containerId: string): boolean {
+  if (scope.cardIds.length === 0) return true;
+  const inCard = (cid: string) =>
+    containerId === cid || isDescendant(root, cid, containerId);
+  if (scope.activeCardId) return inCard(scope.activeCardId);
+  return !scope.cardIds.some(inCard);
 }
 
 function boundingRect(rects: Rect[]): Rect {
@@ -226,6 +267,14 @@ function snapRect(rect: Rect, kind: DragState["kind"], grid: number): Rect {
 interface Props {
   scale: number;
   canvasSize: { w: number; h: number };
+  // Lift vector (canvas units) applied while a popup is being edited, so the
+  // popup's grips/overlays move into the dead space with the floating card. Null
+  // when not editing a popup. Applied as a transform on the layer's measuring
+  // container, so getBoundingClientRect shifts with it and the pointer→canvas
+  // mapping stays correct WITHOUT any per-site delta compensation. (During popup
+  // editing every grip/overlay this layer draws is popup-scoped — see
+  // popupScope — so a single container-level transform is sufficient.)
+  popupShift?: { x: number; y: number } | null;
 }
 
 // Where a flow drag will land — drawn as an amber bar (horizontal between rows,
@@ -233,9 +282,13 @@ interface Props {
 interface DropIndicator {
   vertical: boolean;
   rect: Rect; // canvas-space
+  // A "you're aiming here, but it won't fit" preview (an infeasible side-by-side
+  // merge). Rendered as a striped amber bar instead of the solid one, and on
+  // release the drag is cancelled + the "Widen panel to fit" warning is shown.
+  warn?: boolean;
 }
 
-export default function DragLayer({ scale, canvasSize }: Props) {
+export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
   const root = useStore((s) => s.root);
   const selectedId = useStore((s) => s.selectedSlotId);
   const select = useStore((s) => s.select);
@@ -250,11 +303,15 @@ export default function DragLayer({ scale, canvasSize }: Props) {
   const nudgeCommit = useStore((s) => s.nudgeCommit);
   const flowReparent = useStore((s) => s.flowReparent);
   const restorePreDrag = useStore((s) => s.restorePreDrag);
+  const cancelDrag = useStore((s) => s.cancelDrag);
   const setLiveDrag = useStore((s) => s.setLiveDrag);
   const duplicate = useStore((s) => s.duplicate);
   const remove = useStore((s) => s.remove);
   const toggleSlotLock = useStore((s) => s.toggleSlotLock);
   const openContextMenu = useStore((s) => s.openContextMenu);
+  const widenCanvasAndMerge = useStore((s) => s.widenCanvasAndMerge);
+  const groupIntoColumn = useStore((s) => s.groupIntoColumn);
+  const dissolveColumns = useStore((s) => s.dissolveColumns);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
@@ -278,6 +335,9 @@ export default function DragLayer({ scale, canvasSize }: Props) {
   // canvas-wrapper px, matching the grip coordinate space.)
   const [rowPicker, setRowPicker] = useState<{ ids: string[]; left: number; top: number } | null>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
+  // After a side-by-side drop was rejected for lack of room, offer to widen the
+  // panel and place the elements side-by-side anyway. Cleared on the next drag.
+  const [widenToast, setWidenToast] = useState<{ rowIds: string[]; draggedIds: string[]; containerId: string } | null>(null);
 
   const selectedSlot = useMemo(
     () => (selectedId ? findSlot(root, selectedId) : null),
@@ -356,6 +416,40 @@ export default function DragLayer({ scale, canvasSize }: Props) {
     [root, canvasSize],
   );
 
+  // Resolve which popup card (if any) the selection puts us "inside", so grips
+  // can be scoped to the visible surface (the editing card, or the main canvas).
+  const popupScope = useMemo<PopupScope>(() => {
+    const cardIds = root.children
+      .filter((c) => c.components.some((cc) => cc.type === "PopupContent"))
+      .map((c) => c.id);
+    if (cardIds.length === 0 || !selectedId) return { cardIds, activeCardId: null };
+    const sel = findSlot(root, selectedId);
+    const popup = sel?.components.find((c) => c.type === "Popup");
+    let activeCardId: string | null = null;
+    if (popup) {
+      // Selection is a popup trigger → its linked content card is being edited.
+      const cid = (popup.props as { contentSlotId?: string }).contentSlotId;
+      if (cid && cardIds.includes(cid)) activeCardId = cid;
+    } else {
+      // Selection is the card itself or something inside it.
+      activeCardId =
+        cardIds.find((cid) => cid === selectedId || isDescendant(root, cid, selectedId)) ?? null;
+    }
+    return { cardIds, activeCardId };
+  }, [root, selectedId]);
+
+  // While a popup floats in the dead space, its grips should HUG the card's left
+  // edge rather than sit on the canvas's left gutter (the default rail), so they
+  // read as belonging to the floating card and not the panel behind it. This is
+  // the card's left x in canvas units; the grip render adds it (×scale) so the
+  // rail lands just left of the card. Render-only — the pointer math keys off the
+  // layer's container transform (popupShift), not individual grip positions, so
+  // shifting where grips DRAW doesn't disturb dragging.
+  const popupCardLeftX = useMemo(() => {
+    if (!popupShift || !popupScope.activeCardId) return null;
+    return computeAbsoluteRect(root, popupScope.activeCardId, canvasSize)?.x ?? null;
+  }, [popupShift, popupScope.activeCardId, root, canvasSize]);
+
   // Two-tier grabbables: per-row inner grips (blue at top level, light purple
   // inside a nested container) + a larger light-purple outer grip that moves the
   // whole nested-container *section*. Editor-only — never exported.
@@ -417,20 +511,78 @@ export default function DragLayer({ scale, canvasSize }: Props) {
           if (bottom - top < 6) continue;
           rect = { ...rect, y: top, h: bottom - top };
         }
-        out.push({
-          key: `row-${c.id}-${row.ids.join("_")}`,
-          kind: "row",
-          containerId: c.id,
-          ids: row.ids,
-          rect,
-          nested: c.nested,
-          railX: NEAR_RAIL,
-        });
+        // Members that are themselves a nested container (e.g. a Column beside an
+        // image) already have their OWN purple "section" grip — don't also give
+        // them a blue per-member handle (that's the duplicate "extra blue tab").
+        const memberIds = row.ids.filter((id) => !skip.has(id));
+        if (memberIds.length > 1) {
+          const ordered = [...memberIds].sort(
+            (a, b) =>
+              (computeAbsoluteRect(root, a, canvasSize)?.x ?? 0) -
+              (computeAbsoluteRect(root, b, canvasSize)?.x ?? 0),
+          );
+          // A normal same-height side-by-side row (e.g. a header: icon + title +
+          // close) collapses to ONE grip that reorders the WHOLE row; individual
+          // elements there stay draggable by their body, and CLICKING the grip
+          // opens the element picker. The EXCEPTION — kept as one handle PER
+          // MEMBER — is an asymmetric row where one element is much TALLER than
+          // the rest (a full-height image beside short controls): there the small
+          // members need their own rail grips to stay individually grabbable.
+          const heights = ordered
+            .map((id) => computeAbsoluteRect(root, id, canvasSize)?.h ?? 0)
+            .sort((a, b) => b - a);
+          const tallDisparity = heights.length > 1 && heights[0] >= TALL_FACTOR * heights[1];
+          if (tallDisparity) {
+            // One handle per member (the rail band split into left→right
+            // segments), so any single element can be grabbed and pulled out.
+            const seg = rect.h / ordered.length;
+            ordered.forEach((id, idx) => {
+              out.push({
+                key: `rowmem-${c.id}-${id}`,
+                kind: "row",
+                containerId: c.id,
+                ids: [id],
+                rect: { ...rect, y: rect.y + idx * seg, h: seg },
+                nested: c.nested,
+                railX: NEAR_RAIL,
+              });
+            });
+          } else {
+            // Collapse: one grip spanning the row band. ids = every member, so a
+            // drag reorders the whole row (reorderOnly) and a click opens the
+            // picker (see the grip's onMouseDown / onMouseUp click handling).
+            out.push({
+              key: `row-${c.id}-${ordered.join("-")}`,
+              kind: "row",
+              containerId: c.id,
+              ids: ordered,
+              rect,
+              nested: c.nested,
+              railX: NEAR_RAIL,
+            });
+          }
+        } else if (memberIds.length === 1) {
+          // Single grabbable member (others, if any, are nested containers with
+          // their own purple grip).
+          out.push({
+            key: `row-${c.id}-${memberIds[0]}`,
+            kind: "row",
+            containerId: c.id,
+            ids: memberIds,
+            rect,
+            nested: c.nested,
+            railX: NEAR_RAIL,
+          });
+        }
+        // memberIds.length === 0 → every member is a nested container (covered by
+        // its purple section grip); emit no blue handle.
       }
     }
     // Outer (parent) grips first so the inner child grips render ON TOP of them.
-    return [...outerGrips, ...out];
-  }, [editMode, root, canvasSize, scrollInfo]);
+    // Scope to the visible surface: hide popup-card grips unless that popup is
+    // being edited, and hide the main canvas's grips while it is.
+    return [...outerGrips, ...out].filter((g) => gripInScope(root, popupScope, g.containerId));
+  }, [editMode, root, canvasSize, scrollInfo, popupScope]);
 
   // External purple scrollbars: one per scrollable nested container, in the
   // right gutter just outside the field. Editor-only — the in-game scrollbar is
@@ -447,6 +599,7 @@ export default function DragLayer({ scale, canvasSize }: Props) {
     }[] = [];
     for (const c of getContainers(root, canvasSize)) {
       if (!c.nested) continue;
+      if (!gripInScope(root, popupScope, c.id)) continue; // match grip visibility
       const info = scrollInfo[c.id];
       if (!info || info.scrollH <= info.clientH + 1) continue; // not scrollable
       const trackTop = c.absRect.y * scale;
@@ -467,7 +620,7 @@ export default function DragLayer({ scale, canvasSize }: Props) {
       });
     }
     return out;
-  }, [editMode, root, canvasSize, scrollInfo, scale]);
+  }, [editMode, root, canvasSize, scrollInfo, scale, popupScope]);
 
   // Drag the external scrollbar thumb to scroll its field (sets the editor
   // scroll div's scrollTop; the scroll listener then refreshes the thumb).
@@ -510,12 +663,21 @@ export default function DragLayer({ scale, canvasSize }: Props) {
       allowIntoOverride?: boolean,
       selectId?: string,
     ) => {
+      setWidenToast(null); // a new drag supersedes any pending widen offer
       const container = findContainer(root, sourceContainerId, canvasSize);
       if (!container) return;
       const items = rowItemsOf(root, container, canvasSize);
       const rowItemsMap: Record<string, Rect> = {};
       for (const it of items) rowItemsMap[it.id] = it.rect;
       const rows = groupRows(items);
+      // Content-based minimum width per member, captured now (stable for the drag).
+      const widthOf = (s: Slot) =>
+        rowItemsMap[s.id]?.w ?? computeAbsoluteRect(root, s.id, canvasSize)?.w ?? 0;
+      const minWidths: Record<string, number> = {};
+      for (const it of items) {
+        const sl = findSlot(root, it.id);
+        if (sl) minWidths[it.id] = contentMinWidth(sl, widthOf);
+      }
       const dRects = draggedIds.map((id) => rowItemsMap[id]).filter(Boolean) as Rect[];
       if (dRects.length === 0 || rows.length === 0) return;
       const startRect = boundingRect(dRects);
@@ -559,6 +721,9 @@ export default function DragLayer({ scale, canvasSize }: Props) {
           containers: getContainers(root, canvasSize),
           pending: null,
           nudgeRect: null,
+          widenContext: null,
+          minWidths,
+          columnPending: null,
         },
       };
     },
@@ -809,16 +974,28 @@ export default function DragLayer({ scale, canvasSize }: Props) {
           if (fits) {
             const fx = (mx - r.x) / Math.max(1, r.w);
             const fy = (my - r.y) / Math.max(1, r.h);
+            // A VerticalLayout "column" (the stack beside a tall image) is
+            // addressed by precise INTERNAL index — you want to drop at its top,
+            // middle, or bottom — so its whole vertical interior reads as "inside"
+            // and computeDrop picks the slot by cursor Y (top included). Carving
+            // fractional above/below bands here buried a tall column's first child
+            // center inside the "above" zone, making the column TOP unreachable
+            // (the reported bug). To place an element ABOVE/BELOW a column at root,
+            // drag clear of its vertical extent — the normal root flow handles it.
+            // Other layout containers (ScrollArea) keep their tuned 4-way zones.
+            const isColumn = findSlot(f.snapshotRoot, hovered.id)?.components.some(
+              (c) => c.type === "VerticalLayout",
+            );
             place =
               fx <= BESIDE_FRAC
                 ? "left"
                 : fx >= 1 - BESIDE_FRAC
                   ? "right"
-                  : fy <= BESIDE_FRAC
+                  : !isColumn && fy <= BESIDE_FRAC
                     ? "above"
-                    : fy >= 1 - BESIDE_FRAC
+                    : !isColumn && fy >= 1 - BESIDE_FRAC
                       ? "below"
-                      : null; // center → drop inside
+                      : null; // interior → drop inside (index chosen by computeDrop)
           } else {
             // Raw pixel offset from center (not normalized) → symmetric 45° wedges,
             // so "I pushed it right" reads as right even on a wide-short container.
@@ -962,6 +1139,40 @@ export default function DragLayer({ scale, canvasSize }: Props) {
         f.pending = null;
         setTargetHighlight(null);
         const remaining = rowsWithout(f.sourceRows, f.draggedIds, f.sourceRowItems);
+        // Dead-space-beside-a-tall-element → STACK into a vertical column. Takes
+        // priority over the normal row drop. Shows a box where the column forms;
+        // committed on mouseup by groupIntoColumn.
+        const colDrop = f.absolute
+          ? detectColumnDrop(
+              remaining,
+              f.sourceRowItems,
+              mx,
+              my,
+              f.draggedIds.length,
+              // A member is a column when its slot carries a VerticalLayout — then
+              // dropping into the dead space beside its taller sibling extends it,
+              // even if that sibling is under the TALL_FACTOR ratio.
+              (id) =>
+                findSlot(f.snapshotRoot, id)?.components.some((c) => c.type === "VerticalLayout") ??
+                false,
+            )
+          : null;
+        if (colDrop) {
+          f.columnPending = { shortIds: colDrop.shortIds, place: colDrop.place };
+          f.nudgeRect = null;
+          setBoxGlide(false);
+          // Indicator: the short column's x-extent, in the gap above/below it.
+          const sr = colDrop.shortIds.map((id) => f.sourceRowItems[id]).filter(Boolean) as Rect[];
+          const T = f.sourceRowItems[colDrop.tallId];
+          const left = Math.min(...sr.map((r) => r.x));
+          const right = Math.max(...sr.map((r) => r.x + r.w));
+          const yTop = colDrop.place === "top" ? T.y : Math.max(...sr.map((r) => r.y + r.h));
+          const yBot = colDrop.place === "top" ? Math.min(...sr.map((r) => r.y)) : T.y + T.h;
+          setDropIndicator({ vertical: false, rect: { x: left, y: yTop, w: right - left, h: Math.max(4, yBot - yTop) } });
+          setPreviewRect({ x: left, y: my - drag.startRect.h / 2, w: right - left, h: drag.startRect.h });
+          return;
+        }
+        f.columnPending = null;
         const pab = drag.parentAbsRect;
         const flowBounds = f.absolute ? { left: pab.x, right: pab.x + pab.w } : undefined;
         const planOpts = {
@@ -970,9 +1181,80 @@ export default function DragLayer({ scale, canvasSize }: Props) {
           anchorY: f.sourceRows[0].top,
           bottomMargin: 24,
           bounds: flowBounds,
+          minWidths: f.minWidths,
         };
-        let drop =
-          relDrop(remaining) ?? computeDrop(remaining, f.sourceRowItems, mx, my, f.allowInto);
+        // Feasibility gate: a side-by-side merge is only allowed if the dragged
+        // element + the target row's members fit at their CONTENT minimums (dead
+        // space trimmed). Otherwise the drop is downgraded to "between rows"
+        // (stack). availW mirrors planFlow's content band (bounds minus gutter).
+        const sideMargin = flowBounds ? inferSideMargin(f.sourceRows, flowBounds) : 0;
+        const availW = flowBounds ? flowBounds.right - flowBounds.left - 2 * sideMargin : Infinity;
+        const minOf = (id: string) => f.minWidths[id] ?? memberMinWidth(f.sourceRowItems[id]?.w ?? 0);
+        const canMerge = (rowIndex: number) => {
+          const r = remaining[rowIndex];
+          if (!r) return true;
+          const mins = [...r.ids, ...f.draggedIds].map(minOf);
+          return rowFitsSideBySide(mins, snap.colGap, availW);
+        };
+        // A DIRECT merge into a real element row wins over the "place beside a
+        // container" rel. Color Picker / Reference sit right above the big Scroll
+        // Area; without this, dragging to their RIGHT half lands in the Scroll
+        // Area's "beside-right" zone and gets hijacked (the reported "left works,
+        // right doesn't"). rel only applies when the cursor isn't over a mergeable
+        // element (it's in the container's flank / a gap → computeDrop is "between").
+        const direct = computeDrop(
+          remaining, f.sourceRowItems, mx, my, f.allowInto, undefined, canMerge,
+        );
+        let drop: DropSpec;
+        if (direct.intoRow) {
+          rel = null;
+          drop = direct;
+        } else {
+          drop = relDrop(remaining) ?? direct;
+        }
+        // Detect a merge the user reached for but that won't fit, so the commit
+        // handler can offer to widen the panel. Compare the ungated drop (what the
+        // cursor aims at) to the gated one (what we'll actually do).
+        const rawDrop = f.allowInto
+          ? computeDrop(remaining, f.sourceRowItems, mx, my, true)
+          : drop;
+        f.widenContext =
+          !!flowBounds && rawDrop.intoRow && !drop.intoRow && !rel
+            ? { rowIds: remaining[rawDrop.rowIndex]?.ids ?? [], draggedIds: f.draggedIds, containerId: f.sourceContainerId }
+            : null;
+
+        // Infeasible side-by-side merge: the user is aiming to drop BESIDE an
+        // element, but it won't fit at content-minimum widths. Rather than
+        // silently doing something else (a stack / nudge) with no feedback,
+        // PREVIEW the intent — restore the pre-drag layout (no churn), let the
+        // dragged ghost ride the cursor, and show the yellow vertical drop bar at
+        // the column boundary it WOULD land on, drawn striped to signal "won't
+        // fit". On release the move is cancelled and the amber "Widen panel to
+        // fit" toast stands as the next action (see mouseup).
+        if (f.widenContext) {
+          restorePreDrag();
+          setBoxGlide(false);
+          f.nudgeRect = null;
+          f.pending = null;
+          f.columnPending = null;
+          const row = remaining[rawDrop.rowIndex];
+          if (row) {
+            let barX: number;
+            if (rawDrop.colIndex >= row.ids.length) {
+              const r = f.sourceRowItems[row.ids[row.ids.length - 1]];
+              barX = (r ? r.x + r.w : row.rect.x + row.rect.w) + snap.colGap / 2;
+            } else {
+              const r = f.sourceRowItems[row.ids[rawDrop.colIndex]];
+              barX = (r ? r.x : row.rect.x) - snap.colGap / 2;
+            }
+            setDropIndicator({ vertical: true, warn: true, rect: { x: barX - 2, y: row.top, w: 4, h: row.height } });
+          } else {
+            setDropIndicator(null);
+          }
+          setPreviewRect({ ...drag.startRect, x: drag.startRect.x + dx, y: drag.startRect.y + dy });
+          return;
+        }
+
         let result = planFlow(f.sourceRows, f.sourceRowItems, f.draggedIds, drop, planOpts);
 
         // Single-element travel inside an absolute container, when the cursor
@@ -1152,6 +1434,24 @@ export default function DragLayer({ scale, canvasSize }: Props) {
 
       if (drag.mode === "flow" && drag.flow) {
         const f = drag.flow;
+        // Offer "widen panel to fit" if the last hover was a side-by-side merge
+        // rejected for lack of room.
+        setWidenToast(f.widenContext ?? null);
+        if (f.widenContext) {
+          // The release happened over an infeasible merge (a preview-only hover —
+          // see the mousemove short-circuit). Cancel the move: restore the
+          // pre-drag layout and clear the drag. The amber toast (set above) is the
+          // feedback + the "Widen panel to fit" next step.
+          cancelDrag();
+          return;
+        }
+        if (f.columnPending) {
+          // Stack into a vertical column beside the tall element. Reset the live
+          // preview to the pre-drag tree first, then group (its own undo step).
+          restorePreDrag();
+          groupIntoColumn(f.columnPending.shortIds, f.draggedIds[0], f.columnPending.place);
+          return;
+        }
         if (f.pending) {
           // Cross-container drop: reparent + reflow both sides as one undo step.
           flowReparent(f.draggedIds, f.pending.targetContainerId, f.pending.drop);
@@ -1164,6 +1464,9 @@ export default function DragLayer({ scale, canvasSize }: Props) {
           // Reorder / spacing tidy — one undo step.
           dragCommit();
         }
+        // If the drag pulled an element OUT of a column and left it with ≤1
+        // child, unwrap that column (no-op otherwise).
+        dissolveColumns();
         return;
       }
 
@@ -1206,7 +1509,18 @@ export default function DragLayer({ scale, canvasSize }: Props) {
   return (
     <div
       ref={containerRef}
-      style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "visible" }}
+      style={{
+        position: "absolute",
+        inset: 0,
+        pointerEvents: "none",
+        overflow: "visible",
+        // While editing a popup, lift the whole overlay layer into the dead space
+        // with the floating card. Transforms feed into getBoundingClientRect, so
+        // the pointer→canvas math below needs no other change.
+        transform: popupShift
+          ? `translate(${popupShift.x * scale}px, ${popupShift.y * scale}px)`
+          : undefined,
+      }}
     >
       {/* Block-flow grab rails (snap mode). Blue = top-level rows; light purple =
           rows inside a nested container and its larger outer "move whole
@@ -1225,6 +1539,11 @@ export default function DragLayer({ scale, canvasSize }: Props) {
         // The outer grip extends right under the near rail so it reads as one
         // continuous bar behind the child grips (which draw on top).
         const width = isContainer ? NEAR_RAIL + RAIL_W - g.railX : RAIL_W;
+        // For a floating popup, hug the card's left edge instead of the canvas
+        // gutter so the grabbers read as part of the popup, not the panel.
+        const railLeft =
+          popupCardLeftX != null ? popupCardLeftX * scale - RAIL_W : g.railX;
+        const railWidth = popupCardLeftX != null ? RAIL_W : width;
         return (
           <div
             key={g.key}
@@ -1243,10 +1562,14 @@ export default function DragLayer({ scale, canvasSize }: Props) {
               if (e.button !== 0 || dragController.spaceHeld) return;
               e.preventDefault();
               e.stopPropagation();
-              // Row/section grips reorder as a unit — never merge into a row.
-              // beginFlow selects a single-element row immediately; a multi-
-              // element row defers to the click-to-pick popover (on mouseup).
-              beginFlow(g.ids, g.containerId, e.clientX, e.clientY, false);
+              // A SINGLE-element row grip behaves like grabbing the element body:
+              // it can be dropped side-by-side (merge into a row) — passing
+              // `undefined` lets beginFlow enable merging for a 1-element absolute
+              // drag. The section (container) grip and MULTI-element row grips stay
+              // reorder-only (allowInto=false): moving a whole 3-button row or a
+              // scroll-area section into another row should never merge them.
+              const reorderOnly = g.kind === "container" || g.ids.length > 1;
+              beginFlow(g.ids, g.containerId, e.clientX, e.clientY, reorderOnly ? false : undefined);
             }}
             onMouseEnter={(e) => {
               (e.currentTarget as HTMLDivElement).style.background = base + hoverA;
@@ -1256,9 +1579,9 @@ export default function DragLayer({ scale, canvasSize }: Props) {
             }}
             style={{
               position: "absolute",
-              left: g.railX,
+              left: railLeft,
               top: g.rect.y * scale,
-              width,
+              width: railWidth,
               height: g.rect.h * scale,
               borderRadius: "5px 0 0 5px",
               background: base + restA,
@@ -1404,6 +1727,70 @@ export default function DragLayer({ scale, canvasSize }: Props) {
         </div>
       )}
 
+      {/* "Won't fit" offer — the last drop tried a side-by-side merge that was
+          kept stacked for lack of room. One click widens the panel and places
+          them side-by-side. Pinned bottom-center of the viewport. */}
+      {widenToast && (
+        <div
+          onMouseDown={(e) => e.stopPropagation()}
+          style={{
+            position: "absolute",
+            left: "50%",
+            bottom: 16,
+            transform: "translateX(-50%)",
+            zIndex: 70,
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "8px 10px 8px 12px",
+            borderRadius: 8,
+            background: "rgba(28, 20, 6, 0.97)",
+            border: "1px solid rgba(245, 158, 11, 0.5)",
+            boxShadow: "0 8px 24px rgba(0,0,0,0.45)",
+            pointerEvents: "all",
+            userSelect: "none",
+            fontSize: 12,
+            color: "#fcd34d",
+            whiteSpace: "nowrap",
+          }}
+        >
+          <span style={{ fontWeight: 600 }}>⚠ Not enough width to fit side-by-side.</span>
+          <button
+            onClick={() => {
+              widenCanvasAndMerge(widenToast.containerId, widenToast.rowIds, widenToast.draggedIds);
+              setWidenToast(null);
+            }}
+            style={{
+              padding: "4px 10px",
+              borderRadius: 6,
+              border: "1px solid rgba(245, 158, 11, 0.6)",
+              background: "rgba(245, 158, 11, 0.2)",
+              color: "#fde68a",
+              cursor: "pointer",
+              fontSize: 12,
+              fontWeight: 600,
+            }}
+          >
+            ⤢ Widen panel to fit
+          </button>
+          <button
+            onClick={() => setWidenToast(null)}
+            title="Dismiss"
+            style={{
+              padding: "2px 6px",
+              borderRadius: 6,
+              border: "none",
+              background: "transparent",
+              color: "rgba(252, 211, 77, 0.75)",
+              cursor: "pointer",
+              fontSize: 14,
+            }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Target container highlight (pending cross-container drop) */}
       {targetHighlight && (
         <div
@@ -1431,7 +1818,11 @@ export default function DragLayer({ scale, canvasSize }: Props) {
             top: dropIndicator.rect.y * scale,
             width: dropIndicator.rect.w * scale,
             height: dropIndicator.rect.h * scale,
-            background: "#f59e0b",
+            // Solid amber for a normal drop; striped amber for a "won't fit"
+            // preview (an infeasible side-by-side merge) so it reads as tentative.
+            background: dropIndicator.warn
+              ? "repeating-linear-gradient(45deg, #f59e0b, #f59e0b 4px, rgba(245,158,11,0.3) 4px, rgba(245,158,11,0.3) 8px)"
+              : "#f59e0b",
             borderRadius: 2,
             boxShadow: "0 0 8px rgba(245,158,11,0.9)",
             pointerEvents: "none",

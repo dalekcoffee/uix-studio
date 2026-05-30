@@ -24,6 +24,7 @@ export default function Inspector() {
       <button
         onClick={toggle}
         title="Show Inspector panel"
+        aria-label="Show Inspector panel"
         className="flex h-full w-6 items-center justify-center border-l border-slate-800 bg-slate-900 text-slate-400 hover:bg-slate-800 hover:text-sky-300"
       >
         <span className="text-xs">◀</span>
@@ -41,6 +42,7 @@ export default function Inspector() {
           <button
             onClick={toggle}
             title="Hide panel"
+            aria-label="Hide Inspector panel"
             className="rounded px-1 text-xs text-slate-500 hover:bg-slate-800 hover:text-slate-300"
           >
             ▶
@@ -553,16 +555,18 @@ function AlignWidget({ slot }: { slot: Slot }) {
   const alignSlot = useStore((s) => s.alignSlot);
   const managed = isLayoutManaged(root, slot.id);
 
-  function btn(label: string, title: string, axis: AlignAxis, mode: AlignMode) {
+  function btn(label: string, caption: string, title: string, axis: AlignAxis, mode: AlignMode) {
     return (
       <button
         key={`${axis}-${mode}-${label}`}
         title={title}
+        aria-label={title}
         disabled={managed}
         onClick={() => alignSlot(slot.id, axis, mode)}
-        className="flex h-8 items-center justify-center rounded border border-slate-700 bg-slate-800 text-sm text-slate-200 transition hover:border-sky-500 hover:text-sky-300 disabled:cursor-not-allowed disabled:opacity-40"
+        className="flex flex-col items-center justify-center gap-0.5 rounded border border-slate-700 bg-slate-800 py-1 text-slate-200 transition hover:border-sky-500 hover:text-sky-300 disabled:cursor-not-allowed disabled:opacity-40"
       >
-        {label}
+        <span className="text-sm leading-none">{label}</span>
+        <span className="text-[9px] leading-none text-slate-400">{caption}</span>
       </button>
     );
   }
@@ -579,17 +583,17 @@ function AlignWidget({ slot }: { slot: Slot }) {
       </div>
       <div className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">Horizontal</div>
       <div className="mb-2 grid grid-cols-4 gap-1">
-        {btn("⇤", "Align left", "h", "start")}
-        {btn("⇔", "Center horizontally", "h", "center")}
-        {btn("⇥", "Align right", "h", "end")}
-        {btn("⇿", "Stretch horizontally", "h", "stretch")}
+        {btn("⇤", "Left", "Align left", "h", "start")}
+        {btn("⇔", "Center", "Center horizontally", "h", "center")}
+        {btn("⇥", "Right", "Align right", "h", "end")}
+        {btn("⇿", "Stretch", "Stretch horizontally", "h", "stretch")}
       </div>
       <div className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">Vertical</div>
       <div className="grid grid-cols-4 gap-1">
-        {btn("⇡", "Align top", "v", "start")}
-        {btn("⇕", "Center vertically", "v", "center")}
-        {btn("⇣", "Align bottom", "v", "end")}
-        {btn("⇳", "Stretch vertically", "v", "stretch")}
+        {btn("⇡", "Top", "Align top", "v", "start")}
+        {btn("⇕", "Middle", "Center vertically", "v", "center")}
+        {btn("⇣", "Bottom", "Align bottom", "v", "end")}
+        {btn("⇳", "Stretch", "Stretch vertically", "v", "stretch")}
       </div>
     </div>
   );

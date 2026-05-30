@@ -1,9 +1,13 @@
 import { useMemo, useRef, useEffect, useState, useCallback } from "react";
-import { useStore } from "../state/store";
+import { useStore, type ViewportTransform } from "../state/store";
 import { RenderedSlot } from "./render/renderSlot";
 import { findSlot } from "../model/operations";
 import type { Rect } from "./render/rectTransform";
 import DragLayer from "./DragLayer";
+import ModeSwitchDialog from "./ModeSwitchDialog";
+import PopupEditSurface from "./PopupEditSurface";
+import { findActivePopupCard } from "./render/popupEdit";
+import { computeChildRect, getRectTransform } from "./render/rectTransform";
 import { snapFitness } from "./render/snapFlow";
 import { dragController } from "./dragController";
 
@@ -28,38 +32,34 @@ export default function Viewport() {
   // The toggle is the warned control for this — see switchToSnap/switchToFree.
   const setStackLayout = (on: boolean) => setProp(root.id, "Canvas", "stackLayout", on);
 
-  // Switching Free → Snap re-flows everything into rows, which can discard the
-  // manual positions the user set in Free mode. Warn once (only if they made
-  // free-mode edits) before doing it. autoArrange clears the dirty flag.
-  const switchToSnap = () => {
-    if (editMode === "snap") return;
-    if (
-      freeEditsDirty &&
-      !window.confirm(
-        "Switch to Snap?\n\nSnap mode arranges elements into rows and will re-flow your layout. Manual positions you set in Free mode may be lost.\n\nSnap also re-enables Stack Layout, so the exported panel stays reorderable in-game.",
-      )
-    ) {
-      return;
-    }
+  // Pending mode switch awaiting confirmation in ModeSwitchDialog (null = none).
+  const [pendingSwitch, setPendingSwitch] = useState<null | "snap" | "free">(null);
+
+  const doSwitchToSnap = () => {
     setEditMode("snap");
     setStackLayout(true);
     if (freeEditsDirty) autoArrange();
   };
-
-  // Switching Snap → Free drops to absolute positioning and turns off Stack
-  // Layout, so the exported panel can no longer be rearranged in-game (changing
-  // a slot's order won't move it). Warn before committing to that.
-  const switchToFree = () => {
-    if (editMode === "free") return;
-    if (
-      !window.confirm(
-        "Switch to Free?\n\nFree mode positions every element by exact coordinates — great for precise design. But the exported panel becomes HARD to edit in Resonite: reordering slots in-game will NOT move elements.\n\nSnap mode keeps the panel reorderable in-game. Continue to Free?",
-      )
-    ) {
-      return;
-    }
+  const doSwitchToFree = () => {
     setEditMode("free");
     setStackLayout(false);
+  };
+
+  // Switching Free → Snap re-flows everything into rows, which can discard the
+  // manual positions the user set in Free mode. Confirm via the visual dialog —
+  // but ONLY when they actually made free-mode edits worth losing; otherwise
+  // switch straight away (nothing to warn about).
+  const switchToSnap = () => {
+    if (editMode === "snap") return;
+    if (freeEditsDirty) setPendingSwitch("snap");
+    else doSwitchToSnap();
+  };
+
+  // Switching Snap → Free drops to absolute positioning, so the exported panel
+  // can no longer be rearranged in-game. Always confirm via the visual dialog.
+  const switchToFree = () => {
+    if (editMode === "free") return;
+    setPendingSwitch("free");
   };
   const scaleCanvasContents = useStore((s) => s.scaleCanvasContents);
   const setScaleCanvasContents = useStore((s) => s.setScaleCanvasContents);
@@ -67,6 +67,7 @@ export default function Viewport() {
   const showOverlays = useStore((s) => s.showOverlays);
   const toggleOverlays = useStore((s) => s.toggleOverlays);
   const openContextMenu = useStore((s) => s.openContextMenu);
+  const ensurePopupContent = useStore((s) => s.ensurePopupContent);
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [spaceDown, setSpaceDown] = useState(false);
@@ -154,6 +155,90 @@ export default function Viewport() {
   // expanding symmetrically about the centre (which halves apparent handle speed).
   const halfW = canvasResizeView ? canvasResizeView.halfW : scaledW / 2;
   const halfH = canvasResizeView ? canvasResizeView.halfH : scaledH / 2;
+
+  // ── Popup editing surface ──────────────────────────────────────────────────
+  // When a popup (its trigger, its card, or anything inside) is selected, the
+  // card floats in the dead space AROUND the canvas instead of covering the
+  // panel. Selecting a trigger whose card isn't built yet materializes it first.
+  const popupHostId = useMemo(() => {
+    if (!selectedSlotId) return null;
+    const s = findSlot(root, selectedSlotId);
+    return s?.components.some((c) => c.type === "Popup") ? s.id : null;
+  }, [root, selectedSlotId]);
+  useEffect(() => {
+    if (popupHostId) ensurePopupContent(popupHostId);
+  }, [popupHostId, ensurePopupContent]);
+
+  const popupCard = useMemo(
+    () => findActivePopupCard(root, selectedSlotId),
+    [root, selectedSlotId],
+  );
+
+  // Margins/bands used by both the placement shift and the pan-to-make-room
+  // effect below, so they agree on how much vertical room the card needs.
+  const POPUP_MARGIN = 16; // screen px gap between card and canvas edge
+  const popupVertNeed = (cardScreenH: number) => cardScreenH + POPUP_MARGIN + 34 * scale;
+
+  // Lift vector (canvas units) that moves the card ABOVE or BELOW the canvas
+  // (always — never to the sides), choosing whichever side currently has more
+  // room ("whatever is closer"). The pan effect below guarantees the chosen side
+  // actually has room on tall panels. DragLayer gets the same shift and lifts the
+  // popup's grips/overlays to match.
+  const popupShift = useMemo(() => {
+    if (!popupCard) return null;
+    const cardRect = computeChildRect(
+      { x: 0, y: 0, w: canvasSize.w, h: canvasSize.h },
+      getRectTransform(popupCard),
+    );
+    const cardScreenH = cardRect.h * scale;
+    const boxTop = size.h / 2 - scaledH / 2 + viewport.panY;
+    const deadAbove = boxTop;
+    const deadBelow = size.h - (boxTop + scaledH);
+    const above = deadAbove >= deadBelow; // more room = "closer"
+    const boxX = (scaledW - cardRect.w * scale) / 2; // centred over the canvas
+    const boxY = above ? -(cardScreenH + POPUP_MARGIN) : scaledH + POPUP_MARGIN;
+    return { x: boxX / scale - cardRect.x, y: boxY / scale - cardRect.y };
+  }, [popupCard, canvasSize, scale, scaledW, scaledH, size.h, viewport.panY]);
+
+  // Pan-to-make-room: when a popup opens, a tall panel that fills the viewport
+  // height has no dead space above/below, so the floated card would be clipped.
+  // We pan the view (scale unchanged — less disorienting than a zoom change) so
+  // the closer side opens up enough to show the whole card, and restore the
+  // previous view when the popup closes. Centred horizontally too (panX 0).
+  const savedViewRef = useRef<ViewportTransform | null>(null);
+  const prevPopupIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const id = popupCard?.id ?? null;
+    const prev = prevPopupIdRef.current;
+    prevPopupIdRef.current = id;
+    if (id && !prev) {
+      // Opening: ensure the closer side has room; pan only if it doesn't.
+      const cardRect = computeChildRect(
+        { x: 0, y: 0, w: canvasSize.w, h: canvasSize.h },
+        getRectTransform(popupCard!),
+      );
+      const need = popupVertNeed(cardRect.h * scale) + 24; // a little breathing room
+      const half = size.h / 2 - scaledH / 2;
+      const boxTop = half + viewport.panY;
+      const deadAbove = boxTop;
+      const deadBelow = size.h - (boxTop + scaledH);
+      const above = deadAbove >= deadBelow;
+      const room = above ? deadAbove : deadBelow;
+      if (room < need || viewport.panX !== 0) {
+        savedViewRef.current = { ...viewport };
+        const panY = above ? need - half : half - need;
+        setViewport({ panX: 0, panY });
+      }
+    } else if (!id && prev) {
+      // Closing: restore the view we saved on open (if we changed it).
+      if (savedViewRef.current) {
+        setViewport(savedViewRef.current);
+        savedViewRef.current = null;
+      }
+    }
+    // viewport is intentionally read (not a trigger): the id-transition guard
+    // means the open/close body runs once per popup session, never on plain pans.
+  }, [popupCard, scale, scaledH, size.h, canvasSize, viewport, setViewport]);
 
   // Wheel: ctrl+wheel zooms, plain wheel pans vertically
   const onWheel = useCallback(
@@ -320,7 +405,16 @@ export default function Viewport() {
           />
         )}
 
-        <DragLayer scale={scale} canvasSize={canvasSize} />
+        {popupCard && popupShift && (
+          <PopupEditSurface
+            card={popupCard}
+            shift={popupShift}
+            scale={scale}
+            canvasSize={canvasSize}
+          />
+        )}
+
+        <DragLayer scale={scale} canvasSize={canvasSize} popupShift={popupShift} />
       </div>
 
       {/* Floating viewport controls */}
@@ -475,6 +569,18 @@ export default function Viewport() {
           {selectedLabel}
         </span>
       </div>
+
+      {pendingSwitch && (
+        <ModeSwitchDialog
+          target={pendingSwitch}
+          onConfirm={() => {
+            if (pendingSwitch === "snap") doSwitchToSnap();
+            else doSwitchToFree();
+            setPendingSwitch(null);
+          }}
+          onCancel={() => setPendingSwitch(null)}
+        />
+      )}
     </div>
   );
 }

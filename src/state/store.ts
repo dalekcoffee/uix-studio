@@ -19,13 +19,16 @@ import {
   updateComponentProp,
 } from "../model/operations";
 import { isStructuralSlot } from "../model/structural";
+import { LABELLED_CONTROL_TYPES, controlLabelText } from "../model/controlName";
+import { measureLabelWidth } from "../editor/textMeasure";
+import { contentMinWidth, SNAP_GAP } from "../editor/render/contentMin";
 import { INTERACTIVITY_COMPONENTS, isSlotClickable } from "../model/clickable";
 import { createStarterTemplate } from "../model/template";
 import { applyButtonPreset, type ButtonPresetId } from "../model/buttonPresets";
 import { findPreset } from "../model/presets";
 import { findBackgroundSlots, buildBackgroundTrio } from "../model/background";
 import { SYSTEM_ICON_FLAGS } from "../model/systemIcons";
-import { buildWidget, isWidgetType } from "../model/widgets";
+import { buildWidget, buildPopupContent, buildColumn, isWidgetType } from "../model/widgets";
 import type { PaletteItem } from "../model/palette";
 import {
   applyAccent,
@@ -54,6 +57,7 @@ import {
   reflowAbsolute,
   reflowLayoutOrder,
   rowItemsOf,
+  rowsWithout,
   type DropSpec,
   type ReflowResult,
 } from "../editor/render/snapFlow";
@@ -66,6 +70,78 @@ export type EditMode = "snap" | "free";
 // content and growing the canvas to fit it.
 const APPEND_MARGIN = 24;
 const APPEND_GAP = 16;
+
+// A popup's editable content card is a direct child of the Canvas root, but it
+// floats centered as an overlay — it must be excluded from the root's vertical
+// flow, canvas auto-sizing, and resize re-anchoring.
+function isPopupContentSlot(slot: Slot): boolean {
+  return slot.components.some((c) => c.type === "PopupContent");
+}
+
+// Size every "Column" to its CONTENT height: sum of its children's preferred
+// heights + spacing + padding. Without this the column keeps a fixed RT height
+// and the layout engine scales the children DOWN to fit as more are added (they
+// shrink). The column is top-anchored, so we keep the top edge (offsetMax.y) and
+// extend the bottom (offsetMin.y) down. A child with no LayoutElement preferred
+// height falls back to a row height. Returns same ref when no column changed.
+function fitColumnHeights(root: Slot): Slot {
+  const colIds: string[] = [];
+  (function find(s: Slot) {
+    if (s.name === "Column" && s.components.some((c) => c.type === "VerticalLayout")) colIds.push(s.id);
+    s.children.forEach(find);
+  })(root);
+  if (colIds.length === 0) return root;
+  const r: Slot = JSON.parse(JSON.stringify(root));
+  for (const id of colIds) {
+    const col = findSlot(r, id);
+    if (!col) continue;
+    const vl = col.components.find((c) => c.type === "VerticalLayout")?.props as
+      | { spacing?: number; paddingTop?: number; paddingBottom?: number } | undefined;
+    const spacing = vl?.spacing ?? 8;
+    let h = (vl?.paddingTop ?? 0) + (vl?.paddingBottom ?? 0);
+    col.children.forEach((ch, i) => {
+      const le = ch.components.find((c) => c.type === "LayoutElement")?.props as
+        | { preferredHeight?: number; minHeight?: number } | undefined;
+      const ph = le && (le.preferredHeight ?? -1) > 0
+        ? le.preferredHeight!
+        : le && (le.minHeight ?? -1) > 0 ? le.minHeight! : 36;
+      h += ph + (i > 0 ? spacing : 0);
+    });
+    const rt = col.components.find((c) => c.type === "RectTransform")?.props as
+      | { offsetMin?: { x: number; y: number }; offsetMax?: { x: number; y: number } } | undefined;
+    if (rt?.offsetMin && rt?.offsetMax) {
+      rt.offsetMin = { ...rt.offsetMin, y: rt.offsetMax.y - h };
+    }
+  }
+  return r;
+}
+
+// Unwrap any "Column" (VerticalLayout group) that's been reduced to ≤1 child —
+// a column only earns its existence with 2+ stacked elements. A 1-child column
+// is replaced in place by its remaining child; a 0-child one is removed. Returns
+// the same root ref when nothing changed (so callers can skip a needless reflow).
+function dissolveEmptyColumns(root: Slot): Slot {
+  let r = root;
+  for (;;) {
+    let target: Slot | null = null;
+    const find = (s: Slot) => {
+      if (target) return;
+      if (s.name === "Column" && s.components.some((c) => c.type === "VerticalLayout") && s.children.length <= 1) {
+        target = s; return;
+      }
+      s.children.forEach(find);
+    };
+    find(r);
+    if (!target) break;
+    const col = target as Slot;
+    const parent = findParent(r, col.id);
+    if (!parent) break;
+    const idx = parent.children.findIndex((c) => c.id === col.id);
+    if (col.children.length === 1) r = moveSlotTo(r, col.children[0].id, parent.id, idx);
+    r = removeSlot(r, col.id);
+  }
+  return r;
+}
 
 // "Scale contents OFF" resize: change the Canvas size while keeping every FRONT
 // element's rendered pixel SIZE constant — the canvas just gains/loses empty
@@ -100,6 +176,9 @@ function resizeCanvasKeepingSizes(
   for (const child of next.children) {
     // Background layers stretch with the canvas — leave their offsets alone.
     if (isStructuralSlot(child)) continue;
+    // The popup card floats centered (anchored 0.5,0.5); leave it untouched so
+    // it stays the same size centered regardless of canvas size.
+    if (isPopupContentSlot(child)) continue;
     const rtComp = child.components.find((c) => c.type === "RectTransform");
     if (!rtComp) continue;
     const rt = getRectTransform(child);
@@ -195,6 +274,11 @@ interface State {
   // drive the tree's editor. Cleared once the row consumes it.
   renamingSlotId: string | null;
   theme: Theme;
+  // True when the document has unsaved changes since the last load / explicit
+  // "Save Project". Drives the beforeunload guard and gates autosave (we only
+  // persist — and only offer to restore — once the user has actually edited
+  // something, so an untouched starter template never prompts a restore).
+  dirty: boolean;
 }
 
 interface Actions {
@@ -280,6 +364,9 @@ interface Actions {
   loadPreset: (presetId: string) => void;
   documentSnapshot: () => UixDocument;
   reset: () => void;
+  // Clear the unsaved-changes flag — called after an explicit "Save Project" so
+  // the beforeunload guard stops warning until the next edit.
+  markClean: () => void;
   setViewport: (v: Partial<ViewportTransform>) => void;
   resetViewport: () => void;
   setSnap: (s: Partial<SnapSettings>) => void;
@@ -308,6 +395,27 @@ interface Actions {
   // source container so each lays out cleanly. Live (off _preDragRoot) — bracket
   // with dragStart()/dragCommit(). Powers pull-in/pull-out of scroll areas.
   flowReparent: (draggedIds: string[], targetContainerId: string, drop: DropSpec) => void;
+  // Ensure a popup host (a slot carrying a Popup component) has an editable
+  // content card. If its Popup.contentSlotId is missing or stale, build a
+  // PopupContent container from the Popup's title/body/dismiss strings + current
+  // theme, append it as a centered Canvas-root child, and link it. No-op if the
+  // content slot already exists. One undoable commit. Called when entering popup
+  // editing (selecting the host).
+  ensurePopupContent: (hostId: string) => void;
+  // Stack the dragged element into a vertical Column beside a TALL element: group
+  // the short member(s) + the dragged element into a VerticalLayout column (or add
+  // to an existing one), placed where the short member was. `place` = where the
+  // dragged element lands in the column. One undoable commit; reflows after.
+  groupIntoColumn: (shortIds: string[], draggedId: string, place: "top" | "bottom") => void;
+  // Unwrap any Column reduced to ≤1 child (after an element was dragged out).
+  // No-op + no history entry when nothing changed. Reflows after.
+  dissolveColumns: () => void;
+  // Widen the canvas just enough to place `draggedIds` side-by-side with the
+  // members of the row they were dropped beside (`rowIds`), then perform the
+  // merge. Used by the "widen panel to fit" affordance when a side-by-side was
+  // rejected for lack of room. Only the absolute root canvas is widened. One
+  // undoable commit.
+  widenCanvasAndMerge: (containerId: string, rowIds: string[], draggedIds: string[]) => void;
   // Restore the live root to the pre-drag snapshot WITHOUT clearing it (so the
   // drag can continue). Used when a flow drag's cursor leaves the source
   // container — the source's live reflow is undone before previewing the target.
@@ -340,7 +448,6 @@ interface Actions {
   applyThemeButtonA: () => void;
   applyThemeButtonB: () => void;
   applyThemeCornerRadius: () => void;
-  applyThemeBackLogo: () => void;
   applyBranding: () => void;
 }
 
@@ -353,6 +460,7 @@ export const useStore = create<State & Actions>((set, get) => {
       history: [...s.history, s.root].slice(-HISTORY_LIMIT),
       future: [],
       root: next,
+      dirty: true,
     }));
   }
 
@@ -445,8 +553,70 @@ export const useStore = create<State & Actions>((set, get) => {
         next = updateComponentProp(next, id, "RectTransform", "offsetMin", offsetMin);
         next = updateComponentProp(next, id, "RectTransform", "offsetMax", offsetMax);
       }
+      // Layer 2 — dead-space trim: group the arranged members into rows; a
+      // labeled composite that shares a row with others gets its label hugged to
+      // the control (compact), a lone one is restored to the spread layout. This
+      // collapses the empty space between a label and its control when packed
+      // side-by-side, and reverses it when an element is alone again.
+      const items = Object.keys(result.rects).map((id) => ({ id, rect: result.rects[id] }));
+      for (const row of groupRows(items)) {
+        const packed = row.ids.length > 1;
+        for (const id of row.ids) next = reanchorLabeledComposite(next, id, packed);
+      }
     }
     return reorderContainerChildren(next, container.id, result.order);
+  }
+
+  // Re-lay a labeled composite's internals for the given wrapper state: when
+  // `packed` (side-by-side), the label becomes a tight right-anchored box hugging
+  // the control with dead space to its left; when alone, the authored spread
+  // layout (label stretches from the left edge to just before the control) is
+  // restored. Only the simple "Label + one control" shape is handled; multi-part
+  // composites (Radio Group, keypad) are left untouched. Deterministic from the
+  // control's width + measured label text, so it's idempotent and reversible.
+  function reanchorLabeledComposite(root: Slot, slotId: string, packed: boolean): Slot {
+    const slot = findSlot(root, slotId);
+    if (!slot || !LABELLED_CONTROL_TYPES.has(slot.name)) return root;
+    const label = slot.children.find((c) => c.name === "Label");
+    if (!label) return root;
+    const controls = slot.children.filter(
+      (c) => c !== label && c.components.some((k) => k.type === "RectTransform"),
+    );
+    if (controls.length !== 1) return root; // skip multi-part composites
+    const crt = getRectTransform(controls[0]);
+    const controlW = Math.abs((crt.offsetMax?.x ?? 0) - (crt.offsetMin?.x ?? 0));
+    if (controlW <= 0) return root;
+    const lrt = getRectTransform(label);
+    const fontPx = (label.components.find((k) => k.type === "Text")?.props as { size?: number } | undefined)?.size ?? 14;
+    const labelW = measureLabelWidth(controlLabelText(slot), fontPx);
+    const reserve = controlW + SNAP_GAP;
+    const aMin = { x: packed && labelW > 0 ? 1 : 0, y: lrt.anchorMin.y };
+    const aMax = { x: 1, y: lrt.anchorMax.y };
+    const oMin = { x: packed && labelW > 0 ? -(reserve + labelW) : 0, y: lrt.offsetMin.y };
+    const oMax = { x: -reserve, y: lrt.offsetMax.y };
+    let r = updateComponentProp(root, label.id, "RectTransform", "anchorMin", aMin);
+    r = updateComponentProp(r, label.id, "RectTransform", "anchorMax", aMax);
+    r = updateComponentProp(r, label.id, "RectTransform", "offsetMin", oMin);
+    r = updateComponentProp(r, label.id, "RectTransform", "offsetMax", oMax);
+    return r;
+  }
+
+  // Build the content-based minimum-width map for a container's members, used to
+  // trim dead space (not squish) and to gate "does this fit side-by-side?".
+  function minWidthsFor(
+    root: Slot,
+    container: { id: string },
+    canvasSize: { w: number; h: number },
+  ): Record<string, number> {
+    const c = findSlot(root, container.id);
+    if (!c) return {};
+    const widthOf = (s: Slot) => computeAbsoluteRect(root, s.id, canvasSize)?.w ?? 0;
+    const out: Record<string, number> = {};
+    for (const child of c.children) {
+      if (isStructuralSlot(child) || isPopupContentSlot(child)) continue;
+      out[child.id] = contentMinWidth(child, widthOf);
+    }
+    return out;
   }
 
   // CSS-top Y of the lowest edge of any non-structural top-level content. Used
@@ -455,6 +625,7 @@ export const useStore = create<State & Actions>((set, get) => {
     let maxBottom = APPEND_MARGIN;
     for (const child of root.children) {
       if (isStructuralSlot(child)) continue;
+      if (isPopupContentSlot(child)) continue; // centered overlay, not in flow
       const r = computeAbsoluteRect(root, child.id, canvasSize);
       if (r) maxBottom = Math.max(maxBottom, r.y + r.h);
     }
@@ -512,6 +683,7 @@ export const useStore = create<State & Actions>((set, get) => {
   // Free mode skips this (callers guard on editMode) — absolute placement and
   // intentional overlaps are the user's to manage there.
   function snapReflowRoot(root: Slot): Slot {
+    root = fitColumnHeights(root); // columns size to their content before reflow
     const canvasSize = canvasSizeOf(root);
     const rootC = getContainers(root, canvasSize).find((c) => c.isRoot);
     if (!rootC) return root;
@@ -526,6 +698,7 @@ export const useStore = create<State & Actions>((set, get) => {
       anchorY: rows[0].top,
       bottomMargin: APPEND_MARGIN,
       bounds: { left: rootC.absRect.x, right: rootC.absRect.x + rootC.absRect.w },
+      minWidths: minWidthsFor(root, rootC, canvasSize),
     });
     return applyResultToContainer(root, rootC, result, canvasSize);
   }
@@ -562,6 +735,7 @@ export const useStore = create<State & Actions>((set, get) => {
     contextMenu: null,
     renamingSlotId: null,
     theme: defaultTheme(),
+    dirty: false,
 
     select: (id) => set({ selectedSlotId: id }),
 
@@ -1038,6 +1212,7 @@ export const useStore = create<State & Actions>((set, get) => {
         _preDragRoot: null,
         collapsed: defaultCollapsed(doc.root),
         theme: doc.theme ?? defaultTheme(),
+        dirty: false,
       });
     },
 
@@ -1061,6 +1236,7 @@ export const useStore = create<State & Actions>((set, get) => {
         collapsed: defaultCollapsed(r),
         editMode: stack ? "snap" : "free",
         freeEditsDirty: false,
+        dirty: false,
       });
     },
 
@@ -1070,6 +1246,8 @@ export const useStore = create<State & Actions>((set, get) => {
       root: get().root,
       theme: get().theme,
     }),
+
+    markClean: () => set({ dirty: false }),
 
     reset: () => {
       // "New" starts from the blank canvas (which now carries the dark
@@ -1085,6 +1263,7 @@ export const useStore = create<State & Actions>((set, get) => {
         _preDragRoot: null,
         collapsed: defaultCollapsed(r),
         theme: defaultTheme(),
+        dirty: false,
       });
     },
 
@@ -1196,6 +1375,14 @@ export const useStore = create<State & Actions>((set, get) => {
         );
         targetRowItems[id] = { x, y: sr.y, w: sr.w, h: sr.h };
       }
+      // Content-based mins for target members + the incoming dragged element(s).
+      const repWidthOf = (s: Slot) =>
+        computeAbsoluteRect(base, s.id, canvasSize)?.w ?? targetRowItems[s.id]?.w ?? 0;
+      const targetMin: Record<string, number> = {};
+      for (const id of [...targetItems.map((it) => it.id), ...draggedIds]) {
+        const sl = findSlot(base, id);
+        if (sl) targetMin[id] = contentMinWidth(sl, repWidthOf);
+      }
       const result = planFlow(targetRows, targetRowItems, draggedIds, drop, {
         rowGap,
         colGap,
@@ -1205,6 +1392,7 @@ export const useStore = create<State & Actions>((set, get) => {
           target.strategy === "absolute"
             ? { left: target.absRect.x, right: target.absRect.x + target.absRect.w }
             : undefined,
+        minWidths: targetMin,
       });
 
       // Reparent each dragged id into the target (append; order fixed below).
@@ -1235,6 +1423,7 @@ export const useStore = create<State & Actions>((set, get) => {
                     anchorY: srcRows[0].top,
                     bottomMargin: APPEND_MARGIN,
                     bounds: { left: src.absRect.x, right: src.absRect.x + src.absRect.w },
+                    minWidths: minWidthsFor(next, src, canvasSize),
                   })
                 : reflowLayoutOrder(srcRows);
             next = applyResultToContainer(next, src, srcResult, canvasSize);
@@ -1256,8 +1445,154 @@ export const useStore = create<State & Actions>((set, get) => {
       if (p) set({ root: p, _preDragRoot: null });
     },
 
-    autoArrange: () => {
+    ensurePopupContent: (hostId) => {
       const r0 = get().root;
+      const host = findSlot(r0, hostId);
+      const popup = host?.components.find((c) => c.type === "Popup");
+      if (!host || !popup) return;
+      const props = popup.props as {
+        title?: string; body?: string; dismissLabel?: string; contentSlotId?: string;
+      };
+      // Already linked to a live content slot → nothing to do.
+      if (props.contentSlotId && findSlot(r0, props.contentSlotId)) return;
+
+      const theme = get().theme;
+      const canvasSize = canvasSizeOf(r0);
+      const cardW = Math.min(Math.max(canvasSize.w - 32, 260), 600);
+      const cardH = Math.min(Math.max(canvasSize.h - 32, 160), 320);
+      const content = buildPopupContent({
+        title: (props.title ?? "Heads up").trim() || "Heads up",
+        body: (props.body ?? "").trim() || "Your message here.",
+        dismissLabel: (props.dismissLabel ?? "Dismiss").trim() || "Dismiss",
+        cardW, cardH,
+        surface: theme.controlSurface,
+        headerColor: theme.headerTextColor,
+        bodyColor: theme.bodyTextColor,
+        buttonColor: theme.buttonA,
+      });
+      // Append the card as a direct Canvas-root child (centered overlay) and
+      // link it. Both helpers clone, so r0 stays untouched.
+      let next = addChildSlot(r0, r0.id, content);
+      next = updateComponentProp(next, hostId, "Popup", "contentSlotId", content.id);
+      commit(next);
+    },
+
+    widenCanvasAndMerge: (containerId, rowIds, draggedIds) => {
+      const r0 = get().root;
+      const canvasSize = canvasSizeOf(r0);
+      const c0 = findContainer(r0, containerId, canvasSize);
+      // Only the absolute root canvas has a user-resizable width.
+      if (!c0 || !c0.isRoot || c0.strategy !== "absolute") return;
+      const colGap = get().snap.colGap;
+      // Natural widths of every element that will share the row.
+      const members = [...rowIds, ...draggedIds];
+      const widths = members
+        .map((id) => computeAbsoluteRect(r0, id, canvasSize)?.w ?? 0)
+        .filter((w) => w > 0);
+      if (widths.length < 2) return;
+      // Size the canvas so the merged row fits at NATURAL widths within a fixed
+      // gutter. We pass this same gutter explicitly to planFlow below so the
+      // merge isn't re-squished by an inferred margin (the other, still-narrow
+      // rows would otherwise inflate inferSideMargin and shrink the merged row).
+      const GUTTER = 16;
+      const needContent = widths.reduce((s, w) => s + w, 0) + (widths.length - 1) * colGap;
+      const newW = Math.ceil(Math.max(canvasSize.w, needContent + 2 * GUTTER + 4));
+
+      // Widen the canvas, keeping every element's pixel size (re-anchor only).
+      let next = resizeCanvasKeepingSizes(r0, canvasSize, newW, canvasSize.h, get().editMode);
+      const newSize = { w: newW, h: canvasSize.h };
+
+      // Merge: drop the dragged element(s) into the target row at its right end.
+      const rootC = getContainers(next, newSize).find((c) => c.id === containerId);
+      if (!rootC) { commit(next); return; }
+      const items = rowItemsOf(next, rootC, newSize);
+      const rowItems: Record<string, Rect> = {};
+      items.forEach((it) => (rowItems[it.id] = it.rect));
+      const rows = groupRows(items);
+      const remaining = rowsWithout(rows, draggedIds, rowItems);
+      const targetIdx = remaining.findIndex((r) => rowIds.some((id) => r.ids.includes(id)));
+      const drop: DropSpec = targetIdx >= 0
+        ? { rowIndex: targetIdx, intoRow: true, colIndex: remaining[targetIdx].ids.length }
+        : { rowIndex: remaining.length, intoRow: false, colIndex: 0 };
+      const result = planFlow(rows, rowItems, draggedIds, drop, {
+        rowGap: get().snap.rowGap,
+        colGap,
+        anchorY: rows[0]?.top ?? rootC.absRect.y,
+        bottomMargin: APPEND_MARGIN,
+        bounds: { left: rootC.absRect.x, right: rootC.absRect.x + rootC.absRect.w },
+        sideMargin: GUTTER,
+        minWidths: minWidthsFor(next, rootC, newSize),
+      });
+      next = applyResultToContainer(next, rootC, result, newSize);
+      commit(next);
+    },
+
+    groupIntoColumn: (shortIds, draggedId, place) => {
+      let r = get().root;
+      const canvasSize = canvasSizeOf(r);
+      const dragged = findSlot(r, draggedId);
+      const shorts = shortIds.map((id) => findSlot(r, id)).filter(Boolean) as Slot[];
+      if (!dragged || shorts.length === 0) return;
+
+      // If the short side is ALREADY a column (VerticalLayout), just move the
+      // dragged element into it at the requested end.
+      if (shorts.length === 1 && shorts[0].components.some((c) => c.type === "VerticalLayout")) {
+        const colId = shorts[0].id;
+        // Capture the dragged element's natural height BEFORE the move so the
+        // column can size to content (else it has no preferred height inside).
+        const draggedH = computeAbsoluteRect(r, draggedId, canvasSize)?.h ?? 36;
+        r = moveSlotTo(r, draggedId, colId, place === "top" ? 0 : findSlot(r, colId)!.children.length);
+        const col = findSlot(r, colId)!;
+        col.children.forEach((ch, i) => {
+          let le = ch.components.find((c) => c.type === "LayoutElement");
+          if (!le) {
+            le = { type: "LayoutElement", props: { minWidth: -1, minHeight: ch.id === draggedId ? draggedH : 36, preferredWidth: -1, preferredHeight: ch.id === draggedId ? draggedH : 36, flexibleWidth: -1, flexibleHeight: -1, orderOffset: i } };
+            ch.components.push(le);
+          }
+          (le.props as { orderOffset?: number }).orderOffset = i;
+        });
+        commit(snapReflowRoot(r)); // snapReflowRoot calls fitColumnHeights → grows the column
+        return;
+      }
+
+      // Build a new column from the short member(s) + the dragged element.
+      const ordered = place === "top" ? [dragged, ...shorts] : [...shorts, dragged];
+      const column = buildColumn(ordered.map((s) => JSON.parse(JSON.stringify(s)) as Slot));
+      // Position the column where the short member(s) were (beside the tall one),
+      // so the subsequent reflow groups [column, tall] into one side-by-side row.
+      const rects = shorts
+        .map((s) => computeAbsoluteRect(r, s.id, canvasSize))
+        .filter(Boolean) as Rect[];
+      const left = Math.min(...rects.map((b) => b.x));
+      const top = Math.min(...rects.map((b) => b.y));
+      const width = Math.max(...rects.map((b) => b.x + b.w)) - left;
+      const childH = rects[0]?.h ?? 36;
+      const height = ordered.length * (childH + 8);
+      const colRT = column.components.find((c) => c.type === "RectTransform")!;
+      const anchorMin = { x: 0, y: 1 };
+      const anchorMax = { x: 0, y: 1 };
+      const { offsetMin, offsetMax } = rectToOffsets(
+        { x: left, y: top, w: width, h: height },
+        { x: 0, y: 0, w: canvasSize.w, h: canvasSize.h },
+        anchorMin,
+        anchorMax,
+      );
+      colRT.props = { anchorMin, anchorMax, offsetMin, offsetMax, pivot: { x: 0.5, y: 0.5 } };
+      // Remove the originals, add the column, then reflow to tidy the row.
+      for (const id of [...shortIds, draggedId]) r = removeSlot(r, id);
+      r = addChildSlot(r, r.id, column);
+      commit(snapReflowRoot(r));
+    },
+
+    dissolveColumns: () => {
+      const r0 = get().root;
+      const d = dissolveEmptyColumns(r0);
+      if (d === r0) return;
+      commit(snapReflowRoot(d));
+    },
+
+    autoArrange: () => {
+      const r0 = fitColumnHeights(get().root); // columns size to content first
       const canvasSize = canvasSizeOf(r0);
       const rootC = getContainers(r0, canvasSize).find((c) => c.isRoot);
       if (!rootC) return;
@@ -1275,6 +1610,7 @@ export const useStore = create<State & Actions>((set, get) => {
         anchorY: rows[0].top,
         bottomMargin: APPEND_MARGIN,
         bounds: { left: rootC.absRect.x, right: rootC.absRect.x + rootC.absRect.w },
+        minWidths: minWidthsFor(r0, rootC, canvasSize),
       });
 
       commit(applyResultToContainer(r0, rootC, result, canvasSize, true /* fit canvas */));
@@ -1299,7 +1635,7 @@ export const useStore = create<State & Actions>((set, get) => {
     setTheme: (partial) => {
       // Any manual edit kicks the preset selector into "custom" so the user
       // sees that they're no longer on a named preset.
-      set((s) => ({ theme: { ...s.theme, ...partial, preset: "custom" } }));
+      set((s) => ({ theme: { ...s.theme, ...partial, preset: "custom" }, dirty: true }));
     },
 
     selectThemePreset: (preset) => {
@@ -1324,10 +1660,6 @@ export const useStore = create<State & Actions>((set, get) => {
     applyThemeButtonA: () => commit(applyButtonA(get().root, get().theme.buttonA)),
     applyThemeButtonB: () => commit(applyButtonB(get().root, get().theme.buttonB)),
     applyThemeCornerRadius: () => commit(applyCornerRadius(get().root, get().theme.cornerRadius)),
-    applyThemeBackLogo: () => {
-      const t = get().theme;
-      commit(applyBranding(get().root, t.backLogoUrl, t.backLogoReason, t.backLogoImageHash));
-    },
     applyBranding: () => {
       const t = get().theme;
       commit(applyBranding(get().root, t.backLogoUrl, t.backLogoReason, t.backLogoImageHash));

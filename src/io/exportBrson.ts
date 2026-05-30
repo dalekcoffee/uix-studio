@@ -541,6 +541,34 @@ function findPopupPropsForSlotId(
   return null;
 }
 
+// Resolve the editable PopupContent card linked to a popup-host slot, if any.
+// The host's Popup.contentSlotId points at a PopupContent slot elsewhere in the
+// tree (a direct Canvas-root child). Returns null for legacy/un-edited popups
+// (which fall back to the synthesized title/body/dismiss modal).
+function findSlotByIdM(
+  slot: import("../model/types").Slot,
+  id: string,
+): import("../model/types").Slot | null {
+  if (slot.id === id) return slot;
+  for (const child of slot.children) {
+    const r = findSlotByIdM(child, id);
+    if (r) return r;
+  }
+  return null;
+}
+function findPopupContentSlot(
+  canvasSlot: import("../model/types").Slot,
+  hostSlotId: string,
+): import("../model/types").Slot | null {
+  const host = findSlotByIdM(canvasSlot, hostSlotId);
+  const popup = host?.components.find((c) => c.type === "Popup");
+  const cid = (popup?.props as { contentSlotId?: string } | undefined)?.contentSlotId;
+  if (!cid) return null;
+  const content = findSlotByIdM(canvasSlot, cid);
+  if (!content || !content.components.some((c) => c.type === "PopupContent")) return null;
+  return content;
+}
+
 function findDropdownPropsForSlotId(
   slot: import("../model/types").Slot,
   targetId: string,
@@ -2104,7 +2132,7 @@ function compGridLayout(p: Record<string, unknown>): Record<string, unknown> {
     ...baseComp(), ...layoutBase(p),
     SpacingX: fd((p.spacingX as number) ?? 4),
     SpacingY: fd((p.spacingY as number) ?? 4),
-    CellSize: fd([(p.cellWidth as number) ?? 100, (p.cellHeight as number) ?? 100]),
+    CellSize: fd([(p.cellSizeX as number) ?? 80, (p.cellSizeY as number) ?? 80]),
     StartCorner:      fd("UpperLeft"),
     StartAxis:        fd("Horizontal"),
     ChildAlignment:   fd("UpperLeft"),
@@ -4677,6 +4705,7 @@ function buildColorPickerSlot(
   for (const c of slot.components) {
     if (c === rtComp || c === imageComp || c === buttonComp || c === colorPickerComp) continue;
     if (c.type === "Close" || c.type === "Popup" || c.type === "Spacer") continue;
+    if (c.type === "PopupContent" || c.type === "PopupDismiss") continue;
     ordered.push(buildComponent(c));
   }
 
@@ -5088,6 +5117,7 @@ function serializeSlot(
       for (const c of slot.components) {
         if (c === rtComp || c === imageComp || c === buttonComp) continue;
         if (c.type === "Close" || c.type === "Popup" || c.type === "Spacer") continue;
+        if (c.type === "PopupContent" || c.type === "PopupDismiss") continue;
         ordered.push(buildComponent(c));
       }
       components = ordered;
@@ -5107,6 +5137,7 @@ function serializeSlot(
         // auto-inject blocks below, never emitted directly. Spacer is an
         // editor-only filler with no FrooxEngine counterpart.
         if (c.type === "Close" || c.type === "Popup" || c.type === "Spacer") continue;
+        if (c.type === "PopupContent" || c.type === "PopupDismiss") continue;
         if (c.type === "RadioGroup") {
           const rgp = c.props as Record<string, unknown>;
           const groupId = (rgp.groupId as string) ?? "group1";
@@ -5853,6 +5884,98 @@ function buildPopupModalSlot(
   return modal;
 }
 
+// Build a popup modal from a user-authored PopupContent card (the editable
+// path). The card slot, its Image, and every arranged child are serialized
+// through the normal pipeline so the in-game result matches the editor exactly;
+// the only synthetic piece is the dimming backdrop and the Active-toggle wired
+// onto the PopupDismiss child (so it closes the modal). Legacy/un-edited popups
+// use buildPopupModalSlot instead — see the caller in buildRootWrapper.
+function buildPopupModalSlotFromContent(
+  parentId: string,
+  modalActiveFieldId: string,
+  contentSlot: Slot,
+): Record<string, unknown> {
+  // ── Backdrop slot (dims everything behind the card) ──
+  const backdropSlotId = nextId();
+  const backdropCompId = nextId();
+  const backdropRt = compRectTransform({
+    anchorMin: { x: 0, y: 0 }, anchorMax: { x: 1, y: 1 },
+    offsetMin: { x: 0, y: 0 }, offsetMax: { x: 0, y: 0 },
+    pivot: { x: 0.5, y: 0.5 },
+  });
+  const backdropImg = compImage({
+    tint: { r: 0, g: 0, b: 0, a: 0.7 },
+    preserveAspect: false, spriteUrl: "",
+  });
+  const backdrop = {
+    ID: backdropSlotId,
+    Components: { ID: backdropCompId, Data: [
+      { Type: typeIndex("RectTransform"), Data: backdropRt },
+      { Type: typeIndex("Image"),         Data: backdropImg },
+    ]},
+    Name: { ID: nextId(), Data: "Backdrop" },
+    Tag: { ID: nextId(), Data: null },
+    Active: { ID: nextId(), Data: true },
+    "Persistent-ID": nextId(),
+    Position: { ID: nextId(), Data: vec3(0, 0, 0) },
+    Rotation: { ID: nextId(), Data: vec4(0, 0, 0, 1) },
+    Scale: { ID: nextId(), Data: vec3(1, 1, 1) },
+    OrderOffset: { ID: nextId(), Data: Long.fromNumber(0) },
+    ParentReference: null as string | null,
+    Children: [] as unknown[],
+  };
+
+  // ── Card slot = the serialized PopupContent slot ──
+  // Serialize the card shell (no children) to capture its RT + Image, then
+  // serialize each child separately so we can inject the dismiss toggle.
+  const cardShell: Slot = { ...contentSlot, children: [] };
+  const cardSlot = serializeSlot(cardShell, null) as Record<string, unknown> & {
+    ID: string; Children: unknown[]; ParentReference: string | null;
+  };
+  const cardSlotId = cardSlot.ID;
+  const cardChildren: unknown[] = [];
+  for (const child of contentSlot.children) {
+    const ser = serializeSlot(child, cardSlotId) as Record<string, unknown> & {
+      Components: { Data: Array<{ Type: Int32; Data: Record<string, unknown> }> };
+    };
+    // The PopupDismiss child closes the modal — wire ButtonToggle to flip the
+    // modal-root's Active back to false (mirrors the synthesized OK button).
+    if (child.components.some((c) => c.type === "PopupDismiss")) {
+      ser.Components.Data.push({ Type: typeIndex("ButtonToggle"), Data: compButtonToggle(modalActiveFieldId) });
+    }
+    cardChildren.push(ser);
+  }
+  cardSlot.Children = cardChildren;
+
+  // ── Modal root slot — fills the canvas, Active=false initially ──
+  const modalSlotId = nextId();
+  const modalCompId = nextId();
+  const modalRt = compRectTransform({
+    anchorMin: { x: 0, y: 0 }, anchorMax: { x: 1, y: 1 },
+    offsetMin: { x: 0, y: 0 }, offsetMax: { x: 0, y: 0 },
+    pivot: { x: 0.5, y: 0.5 },
+  });
+  const modal = {
+    ID: modalSlotId,
+    Components: { ID: modalCompId, Data: [
+      { Type: typeIndex("RectTransform"), Data: modalRt },
+    ]},
+    Name:           { ID: nextId(), Data: "Popup Modal" },
+    Tag:            { ID: nextId(), Data: null },
+    Active:         { ID: modalActiveFieldId, Data: false },
+    "Persistent-ID": nextId(),
+    Position:       { ID: nextId(), Data: vec3(0, 0, 0) },
+    Rotation:       { ID: nextId(), Data: vec4(0, 0, 0, 1) },
+    Scale:          { ID: nextId(), Data: vec3(1, 1, 1) },
+    OrderOffset:    { ID: nextId(), Data: Long.fromNumber(0) },
+    ParentReference: parentId,
+    Children: [backdrop, cardSlot],
+  };
+  (backdrop as { ParentReference: string | null }).ParentReference = modalSlotId;
+  cardSlot.ParentReference = modalSlotId;
+  return modal;
+}
+
 // Build an INLINE dropdown menu — a single panel positioned directly below
 // its trigger button in canvas-space, holding a vertical stack of option
 // buttons. No backdrop and no centered card; the menu IS the panel. The
@@ -6266,7 +6389,10 @@ function buildCanvasStack(
       (it.ser as { ParentReference: string | null }).ParentReference = contentSlotId;
       return it.ser;
     }
-    // Multi-item row → HorizontalLayout wrapper that preserves side-by-side order.
+    // Multi-item row → HorizontalLayout wrapper. Order members left→right by their
+    // on-canvas x so the in-game HorizontalLayout (which sorts by OrderOffset)
+    // matches the editor's visual order regardless of canvas child-array order.
+    row.sort((a, b) => (a.rect?.left ?? 0) - (b.rect?.left ?? 0));
     const rowH = Math.max(...row.map((it) => it.size.h));
     const rowSlotId = nextId();
     const rowCompId = nextId();
@@ -6336,7 +6462,15 @@ function buildCanvasStack(
 function buildRootWrapper(canvasSlot: Slot): Record<string, unknown> {
   const rootId = nextId();
   const compListId = nextId();
-  const canvasChild = serializeSlot(canvasSlot, rootId);
+  // PopupContent cards are direct Canvas children but must NOT render inline —
+  // they're lowered into the Active=false modal sub-tree below. Strip them from
+  // the serialized canvas (and from the stack-lowering that indexes against it);
+  // the ORIGINAL canvasSlot is kept for resolving each popup's content card.
+  const canvasForSer: Slot = {
+    ...canvasSlot,
+    children: canvasSlot.children.filter((c) => !c.components.some((k) => k.type === "PopupContent")),
+  };
+  const canvasChild = serializeSlot(canvasForSer, rootId);
   // Hoist shared canvas refs used by both overlay sections below.
   let canvasChildren = (canvasChild as { Children: Record<string, unknown>[] }).Children;
   const canvasId = (canvasChild as { ID: string }).ID;
@@ -6349,7 +6483,7 @@ function buildRootWrapper(canvasSlot: Slot): Record<string, unknown> {
   const stackCanvasComp = canvasSlot.components.find((c) => c.type === "Canvas");
   const stackLayoutOn = (stackCanvasComp?.props as { stackLayout?: boolean } | undefined)?.stackLayout !== false;
   if (stackLayoutOn) {
-    const lowered = buildCanvasStack(canvasSlot, canvasChildren, canvasId, canvasRect.w, canvasRect.h);
+    const lowered = buildCanvasStack(canvasForSer, canvasChildren, canvasId, canvasRect.w, canvasRect.h);
     (canvasChild as { Children: Record<string, unknown>[] }).Children = lowered;
     canvasChildren = lowered;
   }
@@ -6363,13 +6497,13 @@ function buildRootWrapper(canvasSlot: Slot): Record<string, unknown> {
     const popupModals: unknown[] = [];
     for (const [hostSlotId, modalActiveId] of _popupActiveIds) {
       const hostProps = findPopupPropsForSlotId(canvasSlot, hostSlotId) ?? {};
-      const modal = buildPopupModalSlot(
-        containerSlotId,
-        modalActiveId,
-        hostProps,
-        canvasRect.w,
-        canvasRect.h,
-      );
+      // Editable path: an authored PopupContent card lowers its real children
+      // into the modal. Legacy path: synthesize the card from title/body/dismiss
+      // (byte-identical to the pre-editable exporter).
+      const contentSlot = findPopupContentSlot(canvasSlot, hostSlotId);
+      const modal = contentSlot
+        ? buildPopupModalSlotFromContent(containerSlotId, modalActiveId, contentSlot)
+        : buildPopupModalSlot(containerSlotId, modalActiveId, hostProps, canvasRect.w, canvasRect.h);
       const popupTitle = (hostProps.title as string | undefined ?? "").trim();
       (modal.Name as { ID: string; Data: string }).Data =
         popupTitle ? `${popupTitle} Popup Modal` : "Popup Modal";

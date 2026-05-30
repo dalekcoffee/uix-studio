@@ -502,6 +502,9 @@ export function RenderedSlot({ slot, rect, isRoot }: Props) {
         </>
       ) : (
         slot.children.map((child, i) => {
+          // A popup card is a root child but floats as a centered overlay shown
+          // only while editing its popup — never inline here (see PopupEditOverlay).
+          if (child.components.some((c) => c.type === "PopupContent")) return null;
           const childLocalRect = layoutRects
             ? layoutRects[i]
             : computeChildRect(containerRect, getRectTransform(child));
@@ -530,71 +533,12 @@ export function RenderedSlot({ slot, rect, isRoot }: Props) {
           💬 popup
         </div>
       )}
-      {/* When the canvas root is rendered and a descendant with a Popup
-          component is currently selected, overlay a centered preview of the
-          popup so the author can see exactly what their dialog will look
-          like. Editor-only — purely a design aid. */}
-      {isRoot && <PopupPreviewLayer canvasRect={rect} />}
+      {/* The popup editing surface used to overlay the card centered ON the
+          canvas here; it now floats in the surrounding dead space and is rendered
+          at the Viewport level (PopupEditSurface) so it doesn't cover the panel
+          and isn't clipped by the canvas. */}
     </div>
   );
-}
-
-function PopupPreviewLayer({ canvasRect }: { canvasRect: Rect }) {
-  const selectedId = useStore((s) => s.selectedSlotId);
-  const root = useStore((s) => s.root);
-  const theme = useStore((s) => s.theme);
-  if (!selectedId) return null;
-  const selected = findSlotById(root, selectedId);
-  const popup = selected?.components.find((c) => c.type === "Popup");
-  if (!selected || !popup) return null;
-  const p = popup.props as { title?: string; body?: string; dismissLabel?: string };
-  const w = Math.min(canvasRect.w * 0.6, 420);
-  const minH = 180;
-  // Mirror the exporter's themed popup so the editor preview matches the
-  // in-Resonite result. Surface = controls bg, title text = header text,
-  // body = body text, dismiss button = button A.
-  const surface = colorToCss(theme.controlSurface);
-  const titleColor = colorToCss(theme.headerTextColor);
-  const bodyColor = colorToCss(theme.bodyTextColor);
-  const buttonColor = colorToCss(theme.buttonA);
-  return (
-    <div
-      className="pointer-events-none absolute inset-0 flex items-center justify-center"
-      style={{ background: "rgba(0,0,0,0.45)" }}
-    >
-      <div
-        className="relative overflow-hidden rounded-lg border border-slate-700 shadow-2xl"
-        style={{ width: w, minHeight: minH, background: surface, color: bodyColor }}
-      >
-        <div className="flex items-center justify-between border-b border-slate-700/60 px-4 py-2">
-          <div className="text-sm font-semibold" style={{ color: titleColor }}>{p.title || "Heads up"}</div>
-        </div>
-        <div className="whitespace-pre-wrap px-4 py-3 text-xs" style={{ color: bodyColor }}>
-          {p.body || "Your message here."}
-        </div>
-        <div className="flex justify-center border-t border-slate-700/60 px-3 py-2">
-          <div
-            className="rounded-full px-4 py-1 text-xs text-white"
-            style={{ background: buttonColor }}
-          >
-            {p.dismissLabel || "Dismiss"}
-          </div>
-        </div>
-        <div className="absolute bottom-1 left-2 text-[9px] text-slate-500">
-          editor preview · matches themed popup on export
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function findSlotById(slot: Slot, id: string): Slot | null {
-  if (slot.id === id) return slot;
-  for (const c of slot.children) {
-    const r = findSlotById(c, id);
-    if (r) return r;
-  }
-  return null;
 }
 
 function ImagePlaceholderOverlay({ rect, color }: { rect: Rect; color?: { r: number; g: number; b: number; a: number } }) {

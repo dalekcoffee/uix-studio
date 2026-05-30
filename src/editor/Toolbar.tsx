@@ -9,10 +9,12 @@ import PresetMenu from "./PresetMenu";
 import WarningsMenu from "./WarningsMenu";
 import LibraryMenu from "./LibraryMenu";
 import HelpMenu from "./HelpMenu";
+import ShortcutsMenu from "./ShortcutsMenu";
 
 export default function Toolbar() {
   const documentSnapshot = useStore((s) => s.documentSnapshot);
   const loadDocument = useStore((s) => s.loadDocument);
+  const markClean = useStore((s) => s.markClean);
   const reset = useStore((s) => s.reset);
   const undo = useStore((s) => s.undo);
   const redo = useStore((s) => s.redo);
@@ -25,6 +27,9 @@ export default function Toolbar() {
   function onSave() {
     const blob = exportNativeFile(documentSnapshot());
     downloadBlob(blob, "panel.uixstudio.json");
+    // The editable project is now persisted to a file the user controls — clear
+    // the unsaved-changes flag so the close-tab guard stops warning.
+    markClean();
   }
 
   async function onExportBrson() {
@@ -77,11 +82,17 @@ export default function Toolbar() {
       <Divider />
 
       <ToolbarGroup label="File">
-        <ToolbarButton onClick={onSave} title="Save project file (.uixstudio.json)">
-          Save
+        <ToolbarButton
+          onClick={onSave}
+          title="Save Project — downloads an editable .uixstudio.json you can reopen here later. This is NOT the Resonite file; use Export for that."
+        >
+          💾 Save Project
         </ToolbarButton>
-        <ToolbarButton onClick={() => fileInputRef.current?.click()} title="Open a saved project">
-          Open…
+        <ToolbarButton
+          onClick={() => fileInputRef.current?.click()}
+          title="Open a previously saved .uixstudio.json project to keep editing"
+        >
+          Open Project…
         </ToolbarButton>
         <input
           ref={fileInputRef}
@@ -94,10 +105,10 @@ export default function Toolbar() {
           <ToolbarButton
             onClick={onExportBrson}
             disabled={isExporting}
-            title="Export for Resonite — drag the resulting .resonitepackage file straight into the game to import"
+            title="Export to Resonite — downloads a .resonitepackage; drag it straight into the game to import. (To keep editing later, use Save Project too.)"
             variant="primary"
           >
-            Export (.resonitepackage )↓
+            ⬇ Export to Resonite
           </ToolbarButton>
           {isExporting && (
             <div
@@ -151,6 +162,7 @@ export default function Toolbar() {
 
       <Divider />
 
+      <ShortcutsMenu />
       <HelpMenu />
 
       <div className="ml-auto flex items-center gap-2 text-slate-400">

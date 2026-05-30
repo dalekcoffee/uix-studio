@@ -36,6 +36,7 @@ export default function HierarchyTree() {
       <button
         onClick={toggle}
         title="Show Hierarchy panel"
+        aria-label="Show Hierarchy panel"
         className="flex h-full w-6 items-center justify-center border-r border-slate-800 bg-slate-900 text-slate-400 hover:bg-slate-800 hover:text-sky-300"
       >
         <span className="text-xs">▶</span>
@@ -53,6 +54,7 @@ export default function HierarchyTree() {
           <button
             onClick={expandAll}
             title="Expand all"
+            aria-label="Expand all layers"
             className="rounded px-1 text-xs text-slate-500 hover:bg-slate-800 hover:text-slate-300"
           >
             ⊞
@@ -60,6 +62,7 @@ export default function HierarchyTree() {
           <button
             onClick={collapseAll}
             title="Collapse all"
+            aria-label="Collapse all layers"
             className="rounded px-1 text-xs text-slate-500 hover:bg-slate-800 hover:text-slate-300"
           >
             ⊟
@@ -67,6 +70,7 @@ export default function HierarchyTree() {
           <button
             onClick={toggle}
             title="Hide panel"
+            aria-label="Hide Hierarchy panel"
             className="ml-1 rounded px-1 text-xs text-slate-500 hover:bg-slate-800 hover:text-slate-300"
           >
             ◀

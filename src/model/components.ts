@@ -274,18 +274,33 @@ const toggleSchema = z.object({
 // components that flip the slot's RT offsets between these positions when the
 // parent Toggle's ValueMultiDriver writes its bool to the drivers' States.
 // Popup: attached to a Button (or BoxCollider) slot to open a modal-style
-// dialog on click. UIX-Studio-side it renders as a custom title+body+dismiss
-// preview. At export time we lower it to a Hyperlink with empty URL: Resonite
-// shows the title+body in its native confirmation dialog and the user's
-// "Cancel" closes it. The dismiss IS the action — no separate URL navigation.
-// A true custom-rendered modal (with the editor's ✕ close affordance) would
-// require hidden-child-slot + ButtonValueSet wiring; the Hyperlink fallback
-// is a working interaction today without that complexity.
+// dialog on click. At export it lowers to a real Active=false spawn-window
+// modal sub-tree (backdrop + card + dismiss button) toggled by ButtonValueSet/
+// ButtonToggle wiring on the trigger and dismiss — see buildPopupModalSlot in
+// exportBrson.ts.
+//
+// The dialog content is editable: `contentSlotId` (when set) points at a
+// PopupContent container slot (a direct child of the Canvas root) that holds
+// the user's arranged elements. The editor renders that subtree as a centered,
+// editable overlay; export lowers its children into the modal card. When
+// `contentSlotId` is absent (legacy saves / un-edited presets) the exporter
+// synthesizes the card from title/body/dismissLabel instead — byte-identical
+// to the pre-editable behavior. `ensurePopupContent` (store.ts) lazily creates
+// the content subtree from these strings on first edit.
 const popupSchema = z.object({
   title: z.string().default("Heads up"),
   body: z.string().default("Your message here."),
   dismissLabel: z.string().default("Dismiss"),
+  // Id of the linked PopupContent container slot. Absent until first edited.
+  contentSlotId: z.string().optional(),
 });
+
+// PopupContent: marker on the editable popup-card container slot. Carries no
+// layout component, so the snap engine treats it as an absolute container and
+// its children get full side-by-side dragging. PopupDismiss marks the child
+// button that closes the modal (so the exporter wires its Active-toggle).
+const popupContentSchema = z.object({});
+const popupDismissSchema = z.object({});
 
 const knobSchema = z.object({
   offOffsetMin: vec2.default({ x: -27, y: -13 }),
@@ -500,6 +515,8 @@ export const COMPONENT_SCHEMAS = {
   Toggle: toggleSchema,
   Knob: knobSchema,
   Popup: popupSchema,
+  PopupContent: popupContentSchema,
+  PopupDismiss: popupDismissSchema,
   Slider: sliderSchema,
   ProgressBar: progressBarSchema,
   Radio: radioSchema,
@@ -749,6 +766,9 @@ export const FIELD_DESCRIPTORS: Record<UixComponentType, readonly FieldDescripto
     { key: "body",         label: "Body",          kind: "string" },
     { key: "dismissLabel", label: "Dismiss Label", kind: "string" },
   ],
+  // Markers — no editable fields (the card is edited by arranging its children).
+  PopupContent: [],
+  PopupDismiss: [],
   Slider: [
     { key: "value", label: "Initial Value", kind: "number", step: 0.01 },
     { key: "min", label: "Min", kind: "number" },

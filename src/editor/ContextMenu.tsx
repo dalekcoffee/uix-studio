@@ -13,15 +13,15 @@ import { isStructuralSlot } from "../model/structural";
 import { isLayoutManaged } from "./render/slotRect";
 import { useDismissable } from "./useDismissable";
 
-const ALIGN_BUTTONS: Array<{ label: string; title: string; axis: AlignAxis; mode: AlignMode }> = [
-  { label: "⇤", title: "Align left", axis: "h", mode: "start" },
-  { label: "⇔", title: "Center horizontally", axis: "h", mode: "center" },
-  { label: "⇥", title: "Align right", axis: "h", mode: "end" },
-  { label: "⇿", title: "Stretch horizontally", axis: "h", mode: "stretch" },
-  { label: "⇡", title: "Align top", axis: "v", mode: "start" },
-  { label: "⇕", title: "Center vertically", axis: "v", mode: "center" },
-  { label: "⇣", title: "Align bottom", axis: "v", mode: "end" },
-  { label: "⇳", title: "Stretch vertically", axis: "v", mode: "stretch" },
+const ALIGN_BUTTONS: Array<{ label: string; caption: string; title: string; axis: AlignAxis; mode: AlignMode }> = [
+  { label: "⇤", caption: "Left", title: "Align left", axis: "h", mode: "start" },
+  { label: "⇔", caption: "Center", title: "Center horizontally", axis: "h", mode: "center" },
+  { label: "⇥", caption: "Right", title: "Align right", axis: "h", mode: "end" },
+  { label: "⇿", caption: "Stretch", title: "Stretch horizontally", axis: "h", mode: "stretch" },
+  { label: "⇡", caption: "Top", title: "Align top", axis: "v", mode: "start" },
+  { label: "⇕", caption: "Middle", title: "Center vertically", axis: "v", mode: "center" },
+  { label: "⇣", caption: "Bottom", title: "Align bottom", axis: "v", mode: "end" },
+  { label: "⇳", caption: "Stretch", title: "Stretch vertically", axis: "v", mode: "stretch" },
 ];
 
 export default function ContextMenu() {
@@ -188,13 +188,15 @@ export default function ContextMenu() {
                   key={b.title}
                   disabled={layoutManaged}
                   title={b.title}
+                  aria-label={b.title}
                   onClick={() => {
                     alignSlot(slot.id, b.axis, b.mode);
                     close();
                   }}
-                  className="flex h-7 items-center justify-center rounded border border-slate-700 bg-slate-800 text-sm text-slate-200 hover:border-sky-500 hover:text-sky-300 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="flex flex-col items-center justify-center gap-0.5 rounded border border-slate-700 bg-slate-800 py-1 text-slate-200 hover:border-sky-500 hover:text-sky-300 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  {b.label}
+                  <span className="text-sm leading-none">{b.label}</span>
+                  <span className="text-[9px] leading-none text-slate-400">{b.caption}</span>
                 </button>
               ))}
             </div>
@@ -207,13 +209,15 @@ export default function ContextMenu() {
                   key={b.title}
                   disabled={layoutManaged}
                   title={b.title}
+                  aria-label={b.title}
                   onClick={() => {
                     alignSlot(slot.id, b.axis, b.mode);
                     close();
                   }}
-                  className="flex h-7 items-center justify-center rounded border border-slate-700 bg-slate-800 text-sm text-slate-200 hover:border-sky-500 hover:text-sky-300 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="flex flex-col items-center justify-center gap-0.5 rounded border border-slate-700 bg-slate-800 py-1 text-slate-200 hover:border-sky-500 hover:text-sky-300 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  {b.label}
+                  <span className="text-sm leading-none">{b.label}</span>
+                  <span className="text-[9px] leading-none text-slate-400">{b.caption}</span>
                 </button>
               ))}
             </div>

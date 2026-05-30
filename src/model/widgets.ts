@@ -305,6 +305,143 @@ function buildScrollArea(cascade: number): Slot {
   return wrap("Scroll Area", 300, 200, cascade, [viewport]);
 }
 
+// Build the editable content card for a popup dialog. Returns a center-anchored
+// ABSOLUTE container slot (PopupContent marker, no layout component) holding a
+// Title text, a Body text, and a Dismiss button — laid out to match the
+// exporter's synthesized card (buildPopupModalSlot in exportBrson.ts) so a
+// freshly-edited popup looks identical to the legacy one, but every piece is now
+// a real draggable slot (full side-by-side support, like the Canvas root).
+//
+// The returned slot is meant to be appended as a direct child of the Canvas root
+// and rendered as a centered overlay (see ensurePopupContent in store.ts and the
+// popup overlay in renderSlot.tsx). The RectTransform here is the FINAL centered
+// rect — callers don't reposition it.
+export interface PopupContentOpts {
+  title: string;
+  body: string;
+  dismissLabel: string;
+  cardW: number;
+  cardH: number;
+  surface?: Color;
+  headerColor?: Color;
+  bodyColor?: Color;
+  buttonColor?: Color;
+}
+
+export function buildPopupContent(opts: PopupContentOpts): Slot {
+  const surface     = opts.surface     ?? rgb(0.12, 0.12, 0.12, 1);
+  const headerColor = opts.headerColor ?? rgb(0.95, 0.95, 0.95, 1);
+  const bodyColor   = opts.bodyColor   ?? rgb(0.82, 0.82, 0.82, 1);
+  const buttonColor = opts.buttonColor ?? rgb(0.18, 0.36, 0.6, 1);
+  const { cardW, cardH } = opts;
+
+  // Band geometry mirrors buildPopupModalSlot's scaling so the default layout is
+  // pixel-identical to the synthesized (legacy) modal at any card size.
+  const padV       = Math.min(16, Math.round(cardH * 0.06));
+  const padH       = Math.min(24, Math.round(cardW * 0.06));
+  const gap        = Math.min(8,  Math.round(cardH * 0.04));
+  const titleBandH = Math.min(40, Math.round(cardH * 0.16));
+  const btnBandH   = Math.min(40, Math.round(cardH * 0.16));
+  const btnHalfW   = Math.min(56, Math.round(cardW * 0.18));
+  const titleSize  = Math.min(22, Math.max(13, Math.round(cardH * 0.085)));
+  const bodySize   = Math.min(16, Math.max(11, Math.round(cardH * 0.065)));
+  const okSize     = Math.min(16, Math.max(12, Math.round(cardH * 0.07)));
+
+  const title = s("Title", [
+    c("RectTransform", {
+      anchorMin: { x: 0, y: 1 }, anchorMax: { x: 1, y: 1 },
+      offsetMin: { x: padH, y: -(padV + titleBandH) }, offsetMax: { x: -padH, y: -padV },
+      pivot: { x: 0.5, y: 0.5 },
+    }),
+    c("Text", { content: opts.title, size: titleSize, color: headerColor, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+  ]);
+
+  const body = s("Body", [
+    c("RectTransform", {
+      anchorMin: { x: 0, y: 0 }, anchorMax: { x: 1, y: 1 },
+      offsetMin: { x: padH, y: padV + btnBandH + gap * 2 }, offsetMax: { x: -padH, y: -(padV + titleBandH + gap) },
+      pivot: { x: 0.5, y: 0.5 },
+    }),
+    c("Text", { content: opts.body, size: bodySize, color: bodyColor, horizontalAlign: "Left", verticalAlign: "Top", autoSize: false }),
+  ]);
+
+  // Dismiss button — bottom-center band. Button + Image on the slot, label text
+  // in a child slot (one graphic per slot). PopupDismiss marks it so the
+  // exporter wires its Active-toggle to close the modal.
+  const dismiss = s("Dismiss", [
+    c("RectTransform", {
+      anchorMin: { x: 0.5, y: 0 }, anchorMax: { x: 0.5, y: 0 },
+      offsetMin: { x: -btnHalfW, y: padV }, offsetMax: { x: btnHalfW, y: padV + btnBandH },
+      pivot: { x: 0.5, y: 0.5 },
+    }),
+    c("Image", { tint: buttonColor, preserveAspect: false, spriteUrl: "", cornerRadius: 8 }),
+    btn(buttonColor),
+    c("PopupDismiss", {}),
+  ], [
+    s("Label", [
+      fillRT(),
+      c("Text", { content: opts.dismissLabel, size: okSize, color: white(), horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false }),
+    ]),
+  ]);
+
+  return s("Popup Dialog", [
+    c("RectTransform", {
+      anchorMin: { x: 0.5, y: 0.5 }, anchorMax: { x: 0.5, y: 0.5 },
+      offsetMin: { x: -cardW / 2, y: -cardH / 2 }, offsetMax: { x: cardW / 2, y: cardH / 2 },
+      pivot: { x: 0.5, y: 0.5 },
+    }),
+    c("Image", { tint: surface, preserveAspect: false, spriteUrl: "", cornerRadius: 16 }),
+    c("PopupContent", {}),
+  ], [title, body, dismiss]);
+}
+
+// A "Column": an invisible VerticalLayout group that stacks short elements in
+// the dead space beside a TALL element (e.g. Color Picker + Reference stacked to
+// the left of a full-height Image). Exports as a VerticalLayout nested inside the
+// row's HorizontalLayout. Each child carries a LayoutElement (preferred height
+// from its current rect) so the layout engine sizes + orders it; orderOffset is
+// re-numbered by array order. Created/dissolved by the store's column actions.
+export function buildColumn(children: Slot[], spacing = 8): Slot {
+  const kids = children.map((ch, i) => {
+    const rt = ch.components.find((c) => c.type === "RectTransform")?.props as
+      | { offsetMin?: { y: number }; offsetMax?: { y: number } } | undefined;
+    const h =
+      rt?.offsetMin && rt?.offsetMax ? Math.abs(rt.offsetMax.y - rt.offsetMin.y) : 36;
+    const hasLE = ch.components.some((c) => c.type === "LayoutElement");
+    const components = hasLE
+      ? ch.components.map((c) =>
+          c.type === "LayoutElement"
+            ? { ...c, props: { ...c.props, preferredHeight: h || 36, orderOffset: i } }
+            : c,
+        )
+      : [
+          ...ch.components,
+          c("LayoutElement", {
+            minWidth: -1, minHeight: h || 36, preferredWidth: -1,
+            preferredHeight: h || 36, flexibleWidth: -1, flexibleHeight: -1,
+            orderOffset: i,
+          }),
+        ];
+    return { ...ch, components };
+  });
+  return s(
+    "Column",
+    [
+      c("RectTransform", {
+        anchorMin: { x: 0.5, y: 0.5 }, anchorMax: { x: 0.5, y: 0.5 },
+        offsetMin: { x: -100, y: -50 }, offsetMax: { x: 100, y: 50 },
+        pivot: { x: 0.5, y: 0.5 },
+      }),
+      c("VerticalLayout", {
+        spacing, paddingTop: 0, paddingBottom: 0, paddingLeft: 0, paddingRight: 0,
+        horizontalAlign: "Left", verticalAlign: "Top",
+        forceExpandWidth: true, forceExpandHeight: false,
+      }),
+    ],
+    kids,
+  );
+}
+
 // ── Registry ────────────────────────────────────────────────────────────────
 
 const BUILDERS: Partial<Record<PaletteItem, (cascade: number) => Slot>> = {

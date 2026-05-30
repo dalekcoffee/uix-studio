@@ -110,7 +110,7 @@ function scrollAreaAsLayoutProps(slot: Slot, axis: "Vertical" | "Horizontal"): a
   return {
     paddingTop: pad, paddingBottom: pad, paddingLeft: pad, paddingRight: pad,
     spacing: (p.spacing as number) ?? 4,
-    horizontalAlign: axis === "Vertical" ? "Left" : "Left",
+    horizontalAlign: "Left",
     verticalAlign:   "Top",
     forceExpandWidth:  axis === "Vertical",
     forceExpandHeight: axis === "Horizontal",
@@ -124,6 +124,10 @@ export function layoutChildren(parent: Rect, slot: Slot, kind: LayoutKind): Rect
   const sorted = [...slot.children].sort(
     (a, b) => getLayoutElement(a).orderOffset - getLayoutElement(b).orderOffset,
   );
+  // Map child id -> its index in the original children array, so the per-child
+  // loops below can write results in original order without an O(n) findIndex
+  // scan each iteration (was O(n^2) per layout pass).
+  const childIndex = new Map(slot.children.map((c, i) => [c.id, i]));
   const isScrollArea = slot.components.some((c) => c.type === "ScrollArea");
 
   if (kind === "Vertical") {
@@ -151,7 +155,7 @@ export function layoutChildren(parent: Rect, slot: Slot, kind: LayoutKind): Rect
       const le = getLayoutElement(child);
       const w = p.forceExpandWidth ? innerW : preferredSize(le, "w");
       const x = p.paddingLeft + alignOffset(innerW, w, p.horizontalAlign);
-      const idx = slot.children.findIndex((c) => c.id === child.id);
+      const idx = childIndex.get(child.id)!;
       result[idx] = { x, y, w, h };
       y += h + p.spacing;
     });
@@ -182,7 +186,7 @@ export function layoutChildren(parent: Rect, slot: Slot, kind: LayoutKind): Rect
       const le = getLayoutElement(child);
       const h = p.forceExpandHeight ? innerH : preferredSize(le, "h");
       const y = p.paddingTop + alignOffset(innerH, h, p.verticalAlign);
-      const idx = slot.children.findIndex((c) => c.id === child.id);
+      const idx = childIndex.get(child.id)!;
       result[idx] = { x, y, w, h };
       x += w + p.spacing;
     });
@@ -208,7 +212,7 @@ export function layoutChildren(parent: Rect, slot: Slot, kind: LayoutKind): Rect
       const row = Math.floor(i / cellsPerRow);
       const x = startX + col * (p.cellSizeX + p.spacingX);
       const y = startY + row * (p.cellSizeY + p.spacingY);
-      const idx = slot.children.findIndex((c) => c.id === child.id);
+      const idx = childIndex.get(child.id)!;
       result[idx] = { x, y, w: p.cellSizeX, h: p.cellSizeY };
     });
     return result;

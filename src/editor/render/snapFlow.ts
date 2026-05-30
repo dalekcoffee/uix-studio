@@ -30,7 +30,23 @@ import type { Rect } from "./rectTransform";
 // its own internal block flow, rendered with its own (light-purple) grabbables
 // and a larger "move the whole thing" outer grabbable. Append future container
 // types here; everything downstream is generic.
-const NESTED_CONTAINER_TYPES: readonly UixComponentType[] = ["ScrollArea"];
+const NESTED_CONTAINER_TYPES: readonly UixComponentType[] = [
+  "ScrollArea",
+  // The editable popup card — has no layout component, so it resolves to the
+  // ABSOLUTE strategy and gets full side-by-side dragging like the Canvas root.
+  "PopupContent",
+  // A "Column": a VerticalLayout group that stacks short elements in the dead
+  // space beside a tall element. Layout strategy → children stack & reorder, each
+  // with its own grip, and you can drop into it like a ScrollArea. (Only
+  // VerticalLayout is nested — Horizontal/Grid stay simple rows, see v0.1.5.)
+  "VerticalLayout",
+];
+// NOTE: plain layout groups (Vertical/Horizontal/Grid Layout) are deliberately
+// NOT nested containers. A button bar / header authored as a HorizontalLayout
+// would otherwise show a confusing two-tier "parent + child" grabbable for what
+// the user just sees as side-by-side elements. They stay single side-by-side/
+// stacked row members; their internal arrangement is handled by the layout
+// engine (getLayoutKind) at render/export. ScrollArea remains a real container.
 
 // "absolute": children positioned by raw RectTransform offsets (the Canvas
 // root). Reflow writes offsets. "layout": children positioned by layoutEngine
@@ -160,6 +176,9 @@ export function rowItemsOf(
   const items: RowItem[] = [];
   for (const child of slot.children) {
     if (isStructuralSlot(child)) continue;
+    // A popup card floats centered as an overlay; it's its own container and
+    // must never join its parent's (the root's) vertical flow.
+    if (child.components.some((c) => c.type === "PopupContent")) continue;
     const rect = computeAbsoluteRect(root, child.id, canvasSize);
     if (rect) items.push({ id: child.id, rect });
   }
@@ -251,6 +270,15 @@ export interface ReflowOptions {
    * inferred from the container's own wide rows (≈ the design's 16px margin).
    */
   sideMargin?: number;
+  /**
+   * Per-id CONTENT-based minimum usable width (canvas px). When present, a member
+   * is never trimmed below `minWidths[id]`, and feasibility ("does this row fit
+   * side-by-side?") is judged against these. Lets the engine trim DEAD SPACE on
+   * roomy canvases instead of refusing/squishing. Falls back to
+   * `memberMinWidth(rect.w)` for ids without an entry. Built by the caller via
+   * `contentMinWidth` (which can measure label text). See src/editor/render/contentMin.ts.
+   */
+  minWidths?: Record<string, number>;
 }
 
 export interface ReflowResult {
@@ -268,7 +296,7 @@ const DEFAULT_SIDE_MARGIN = 16; // matches the template's standard row gutter
 // full-width-ish row reveals the intended left/right inset; the median is robust
 // to one stray edge-hugging row (the very thing we're about to fix). Falls back
 // to the template default when there's nothing to learn from.
-function inferSideMargin(
+export function inferSideMargin(
   rows: SnapRow[],
   bounds: { left: number; right: number },
 ): number {
@@ -308,6 +336,37 @@ function inferSideMargin(
 //     every width proportionally (shrink-to-fit).
 //  4. A single element past the hard edge → shrink (if wider than the container)
 //     or translate minimally back inside; no gutter applied.
+// Minimum usable width when packing an element into a side-by-side row. A merged
+// row may shrink its members to fit the container, but never below this: past it
+// a composite control's fixed internal label/affordance reserve stops reflowing
+// and the control reads as broken (the "squished too much" report). We anchor the
+// minimum to each element's authored ("natural") width — which already encodes
+// how much space that control wants — via a retain factor, with an absolute floor
+// for tiny elements. If a merge can't fit every member at its minimum, the merge
+// is infeasible and is kept STACKED instead (see computeDrop's feasibility gate).
+const MIN_RETAIN = 0.8;
+const MIN_FLOOR_PX = 90;
+// Fallback minimum when the caller didn't supply a content-based one: a fraction
+// of the element's current width. Anchors to the box, so it over-estimates for
+// dead-space-heavy elements — that's why callers prefer contentMinWidth.
+export function memberMinWidth(naturalW: number): number {
+  return Math.max(MIN_FLOOR_PX, naturalW * MIN_RETAIN);
+}
+// The minimum width to honor for one id: the caller's content-based value if
+// present, else the box-fraction fallback.
+function minWidthOf(id: string, rowItems: Record<string, Rect>, minWidths?: Record<string, number>): number {
+  const m = minWidths?.[id];
+  return typeof m === "number" ? m : memberMinWidth(rowItems[id]?.w ?? 0);
+}
+// Do these PRE-RESOLVED minimum widths fit side-by-side within `availW`?
+// Single-member rows always "fit". Used to gate merges / detect over-tight rows.
+export function rowFitsSideBySide(mins: number[], colGap: number, availW: number): boolean {
+  if (mins.length <= 1) return true;
+  const minSum = mins.reduce((s, w) => s + w, 0);
+  const gaps = (mins.length - 1) * colGap;
+  return minSum + gaps <= availW + 0.5;
+}
+
 function layoutRowMembers(
   ids: string[],
   rowItems: Record<string, Rect>,
@@ -316,6 +375,7 @@ function layoutRowMembers(
   bounds: { left: number; right: number } | undefined,
   forceRepack: boolean,
   margin = 0,
+  minWidths?: Record<string, number>,
 ): { rects: Record<string, Rect>; order: string[]; height: number } {
   const rects: Record<string, Rect> = {};
   const order: string[] = [];
@@ -343,20 +403,54 @@ function layoutRowMembers(
   const contentR = hardR - m;
   const availW = contentR - contentL;
 
+  // Vertical placement of a member within the row band. A MULTI-member row
+  // CENTERS each member on the band's mid-line (the band height = its tallest
+  // member) — the same alignment the merge/repack path (Case 3) uses. This is
+  // what makes auto-arrange and add-reflow center a clean side-by-side row,
+  // instead of preserving the per-member y-disparity left over from when the
+  // members happened to be added/dragged at slightly different heights (the
+  // "they shift down and don't stay centered" report). A single-member row keeps
+  // its exact y (minY === r.y, so the offset is 0). Already-centered rows are
+  // unchanged: a member centered at r.y has r.y - minY === (rowHeight - r.h)/2.
+  const memberY = (r: Rect) => (multi ? bandTop + (rowHeight - r.h) / 2 : bandTop + (r.y - minY));
+  // A centered multi-member row consumes exactly its tallest member's height; a
+  // single/preserved row consumes its raw vertical extent.
+  const rowConsumed = multi ? rowHeight : maxY - minY;
+
   // Case 3: explicit re-pack (merge) or horizontal collision → pack left→right
-  // inside the content band, shrinking to fit if necessary.
+  // inside the content band, shrinking to fit if necessary — but NEVER below
+  // each member's minimum usable width (memberMinWidth). The shrink is taken from
+  // each member's over-minimum slack proportionally, so wide labels stay readable
+  // instead of everything scaling uniformly toward zero. If even the minimums
+  // don't fit (a too-tight merge that slipped past the feasibility gate, or a
+  // pre-existing stacked collision), fall back to a uniform scale so the row at
+  // least stays within the hard bounds.
   if (forceRepack) {
-    let scale = 1;
     let startX = bounds ? Math.max(contentL, Math.min(minX, contentR - naturalW)) : minX;
+    const finalW: Record<string, number> = {};
     if (bounds && naturalW > availW + TOL) {
-      scale = sumW > 0 ? Math.max(0, availW - gaps) / sumW : 1;
+      const widths = present.map((id) => rowItems[id].w);
+      const mins = present.map((id) => minWidthOf(id, rowItems, minWidths));
+      const minSum = mins.reduce((a, b) => a + b, 0);
+      const shrinkable = sumW - minSum;
+      const need = sumW - (availW - gaps); // > 0 here
+      if (shrinkable > need - TOL && shrinkable > 0) {
+        // Enough slack above the minimums — shrink each by its share of the slack.
+        present.forEach((id, i) => {
+          finalW[id] = widths[i] - (widths[i] - mins[i]) * (need / shrinkable);
+        });
+      } else {
+        // Can't honor every minimum — uniform scale to stay inside the bounds.
+        const scale = sumW > 0 ? Math.max(0, availW - gaps) / sumW : 1;
+        present.forEach((id) => { finalW[id] = rowItems[id].w * scale; });
+      }
       startX = contentL;
     }
     let x = startX;
     for (const id of ids) {
       const r = rowItems[id];
       if (!r) continue;
-      const w = r.w * scale;
+      const w = finalW[id] ?? r.w;
       rects[id] = { x, y: bandTop + (rowHeight - r.h) / 2, w, h: r.h };
       order.push(id);
       x += w + colGap;
@@ -365,7 +459,7 @@ function layoutRowMembers(
   }
 
   // Case 2: a clean multi-member row that breaks the gutter (hugs/overflows an
-  // edge) → uniformly scale its layout into the content band, preserve y.
+  // edge) → uniformly scale its layout into the content band, vertically centered.
   if (bounds && multi && (minX < contentL - TOL || maxX > contentR + TOL)) {
     const span = Math.max(1, maxX - minX);
     const scale = Math.min(1, availW / span);
@@ -374,13 +468,13 @@ function layoutRowMembers(
       if (!r) continue;
       rects[id] = {
         x: contentL + (r.x - minX) * scale,
-        y: bandTop + (r.y - minY),
+        y: memberY(r),
         w: r.w * scale,
         h: r.h,
       };
       order.push(id);
     }
-    return { rects, order, height: maxY - minY };
+    return { rects, order, height: rowConsumed };
   }
 
   // Case 4: single element wider than the hard container → shrink to it.
@@ -396,17 +490,18 @@ function layoutRowMembers(
   }
 
   // Case 1: in-bounds (or translate a unit minimally back inside the hard edge),
-  // preserving exact x and intentional spacing.
+  // preserving exact x and intentional spacing; multi-member rows are vertically
+  // centered (memberY), single elements keep their exact y.
   let shift = 0;
   if (bounds && minX < hardL - TOL) shift = hardL - minX;
   else if (bounds && maxX > hardR + TOL) shift = hardR - maxX;
   for (const id of ids) {
     const r = rowItems[id];
     if (!r) continue;
-    rects[id] = { x: r.x + shift, y: bandTop + (r.y - minY), w: r.w, h: r.h };
+    rects[id] = { x: r.x + shift, y: memberY(r), w: r.w, h: r.h };
     order.push(id);
   }
-  return { rects, order, height: maxY - minY };
+  return { rects, order, height: rowConsumed };
 }
 
 // Stack rows top→bottom with a uniform rowGap. A clean side-by-side row is
@@ -429,9 +524,29 @@ export function reflowAbsolute(
   const margin = opts.bounds ? opts.sideMargin ?? inferSideMargin(rows, opts.bounds) : 0;
   let y = opts.anchorY ?? (rows[0]?.top ?? 0);
 
-  for (const row of rows) {
+  // Un-squish: a multi-member row that can't fit side-by-side at minimum usable
+  // widths is split into stacked single-element rows. This is what lets
+  // auto-arrange RECOVER a too-tight side-by-side row (the live drag's
+  // feasibility gate prevents creating one, but old saves / collisions can still
+  // have them). Single-member and feasible rows pass through unchanged.
+  const availW = opts.bounds ? opts.bounds.right - opts.bounds.left - 2 * margin : Infinity;
+  const working = opts.bounds
+    ? rows.flatMap((row) => {
+        if (row.ids.length <= 1) return [row];
+        const mins = row.ids.map((id) => minWidthOf(id, rowItems, opts.minWidths));
+        if (rowFitsSideBySide(mins, colGap, availW)) return [row];
+        return row.ids
+          .filter((id) => rowItems[id])
+          .map((id) => {
+            const r = rowItems[id];
+            return { ids: [id], rect: r, top: r.y, height: r.h } as SnapRow;
+          });
+      })
+    : rows;
+
+  for (const row of working) {
     const collide = row.ids.length > 1 && rowMembersOverlapX(row.ids, rowItems);
-    const res = layoutRowMembers(row.ids, rowItems, y, colGap, opts.bounds, collide, margin);
+    const res = layoutRowMembers(row.ids, rowItems, y, colGap, opts.bounds, collide, margin, opts.minWidths);
     if (res.order.length === 0) continue;
     Object.assign(rects, res.rects);
     order.push(...res.order);
@@ -529,10 +644,17 @@ export function rowsWithout(
 // `allowInto` is false for row-grip drags and layout containers (single column):
 // those only ever reorder rows, never merge side-by-side.
 //
-// Into-row only triggers in the middle band of a row (INTO_BAND), so the edges
-// stay reserved for "drop between rows" — otherwise it's impossible to place an
-// element on its own line next to a tall neighbour.
-const INTO_BAND = 0.6;
+// The WHOLE element (its full row rect) is a "drop beside / merge" target — if
+// the cursor is anywhere over an element (plus a small forgiving margin into the
+// surrounding gap), we assume you want to place beside it (column chosen by
+// cursor X). Only the clear space BETWEEN rows reorders/stacks. This makes
+// side-by-side easy to hit instead of requiring a narrow middle band.
+// `MERGE_MARGIN` is the max forgiving overhang into a gap, and it's capped per
+// gap so a stack strip always remains between two rows.
+const MERGE_MARGIN = 8;
+// Always leave at least this much of a gap as a "drop between rows" (stack) strip,
+// so reordering stays possible even as the merge hitbox grows generous.
+const STACK_STRIP = 8;
 // Grace band (canvas px) at a row's left/right edge that still counts as a
 // "drop beside it" — you don't have to land the cursor pixel-perfectly past the
 // edge. Also used by the drag layer to inset a single-column container's hitbox
@@ -545,6 +667,10 @@ export function computeDrop(
   cursorY: number,
   allowInto: boolean,
   grace = SIDE_DROP_GRACE,
+  // Feasibility gate: return false for a row the dragged element can't fit
+  // side-by-side with (at minimum usable widths). Such a merge is downgraded to
+  // a "drop between rows" (stack) instead of squishing. Defaults to always-feasible.
+  canMerge: (rowIndex: number) => boolean = () => true,
 ): DropSpec {
   // Between-rows index: how many rows sit (by center) above the cursor.
   let between = 0;
@@ -553,34 +679,27 @@ export function computeDrop(
     else break;
   }
 
+  void grace; // legacy param kept for callers; merge zones below use the row rect
   if (allowInto) {
     for (let i = 0; i < remaining.length; i++) {
       const row = remaining[i];
-      // Anywhere within the row's FULL vertical extent, a cursor clearly past
-      // the row's right (or left) edge means "drop beside it" — right means
-      // right, left means left. This lets you place an element next to a tall
-      // section (the Scroll Area) by aiming at its flank, even up at its top or
-      // bottom edge where the between-rows band would otherwise win.
-      if (cursorY >= row.top && cursorY <= row.top + row.height) {
-        const rects = row.ids.map((id) => rowItems[id]).filter(Boolean) as Rect[];
-        if (rects.length) {
-          const rowLeft = Math.min(...rects.map((r) => r.x));
-          const rowRight = Math.max(...rects.map((r) => r.x + r.w));
-          // Grace is at least `grace` px but scales up to a fraction of the row,
-          // so the right/left "drop beside" zones on a wide row are easy to hit.
-          // Clamped under half the row so the two bands never overlap (a tiny
-          // element would otherwise be all-grace and ambiguous).
-          const rowW = rowRight - rowLeft;
-          const g = Math.min(Math.max(grace, rowW * 0.2), Math.max(0, rowW / 2 - 1));
-          if (cursorX > rowRight - g) return { rowIndex: i, intoRow: true, colIndex: row.ids.length };
-          if (cursorX < rowLeft + g) return { rowIndex: i, intoRow: true, colIndex: 0 };
-        }
-      }
-      // Otherwise, only the middle band merges side-by-side; the inner top/bottom
-      // edges stay reserved for "drop between rows" (start a new line).
-      const pad = (row.height * (1 - INTO_BAND)) / 2;
-      if (cursorY >= row.top + pad && cursorY <= row.top + row.height - pad) {
-        // Column position: how many members sit (by center-x) left of the cursor.
+      // Skip rows the dragged element can't fit beside (would squish past the
+      // minimum) — fall through so the drop resolves to "between rows" (stack).
+      if (!canMerge(i)) continue;
+      const top = row.top;
+      const bot = row.top + row.height;
+      // Forgiving overhang into the gap above/below, capped so a stack strip
+      // always remains between two adjacent rows (you can still drop between).
+      const gapUp = i > 0 ? top - (remaining[i - 1].top + remaining[i - 1].height) : Infinity;
+      const gapDn = i < remaining.length - 1 ? remaining[i + 1].top - bot : Infinity;
+      // Overhang into the gap, but always leave a STACK_STRIP between two rows so
+      // dropping there reorders instead of merging.
+      const padUp = isFinite(gapUp) ? Math.max(0, Math.min(MERGE_MARGIN, (gapUp - STACK_STRIP) / 2)) : MERGE_MARGIN;
+      const padDn = isFinite(gapDn) ? Math.max(0, Math.min(MERGE_MARGIN, (gapDn - STACK_STRIP) / 2)) : MERGE_MARGIN;
+      // The cursor anywhere over the element (full height + margin) = "place
+      // beside it"; the column is chosen by cursor X (left of a member → before
+      // it, right of the last → after it). This is the whole-element hitbox.
+      if (cursorY >= top - padUp && cursorY <= bot + padDn) {
         let col = 0;
         for (const id of row.ids) {
           const r = rowItems[id];
@@ -592,6 +711,77 @@ export function computeDrop(
     }
   }
   return { rowIndex: between, intoRow: false, colIndex: 0 };
+}
+
+// A "stack beside a tall element" (column) drop. The dragged element should join
+// the SHORT member(s) of a row whose other member is much TALLER, stacking in the
+// dead space beside the tall one (→ a VerticalLayout column).
+export interface ColumnDrop {
+  tallId: string;        // the tall member (e.g. the Image) the column sits beside
+  shortIds: string[];    // the short member(s) to group into the column with the drag
+  place: "top" | "bottom"; // where the dragged element goes in the column
+}
+// A member must be at least this many× the next-tallest to count as "tall" (so a
+// normal same-height side-by-side row never triggers column behavior). Also
+// reused by the drag layer's grip builder to decide when a multi-member row keeps
+// per-member grips (a tall element beside short ones) vs. collapses to one grip.
+export const TALL_FACTOR = 1.6;
+// Detect a dead-space-beside-tall drop. `remaining` = rows WITHOUT the dragged
+// element. Returns null unless the cursor is in the empty space beside a tall
+// member, vertically clear of the short member(s) (so dropping ON the short
+// member is still a normal side-by-side merge). Only for a single dragged
+// element. Handles BOTH forming a new column (two short members beside a tall
+// one) and EXTENDING an existing column (the short side already a VerticalLayout
+// — see isColumn, which waives the height-ratio gate). When the cursor is
+// actually INSIDE the existing column's rect the caller routes to the
+// cross-container "inside" path instead (hovered === the column), so this only
+// fires for the dead space above/below it.
+export function detectColumnDrop(
+  remaining: SnapRow[],
+  rowItems: Record<string, Rect>,
+  cursorX: number,
+  cursorY: number,
+  draggedCount: number,
+  // True when a member id is ALREADY a VerticalLayout column. When the short
+  // side of a row is one, dropping into it is unambiguous, so the strict
+  // TALL_FACTOR ratio is waived (any taller sibling leaves dead space beside the
+  // column that should extend it). Without this, an existing column beside an
+  // only-slightly-taller image (e.g. 1.5× — under TALL_FACTOR) wouldn't accept a
+  // drop into the dead space above/below it. Defaults to "never a column".
+  isColumn: (id: string) => boolean = () => false,
+): ColumnDrop | null {
+  if (draggedCount !== 1) return null;
+  for (const row of remaining) {
+    if (row.ids.length < 1) continue;
+    const byH = [...row.ids].sort((a, b) => (rowItems[b]?.h ?? 0) - (rowItems[a]?.h ?? 0));
+    const tallId = byH[0];
+    const T = rowItems[tallId];
+    if (!T) continue;
+    const others = row.ids.filter((id) => id !== tallId && rowItems[id]);
+    if (others.length === 0) continue; // need a short member to stack with
+    const secondH = Math.max(...others.map((id) => rowItems[id].h));
+    // A tall+short row triggers column behavior. Waive the ratio when the short
+    // side is already a column (see isColumn) — the band/overShort checks below
+    // still require genuine dead space, so an equal-height sibling never fires.
+    const othersHaveColumn = others.some((id) => isColumn(id));
+    if (!othersHaveColumn && T.h < TALL_FACTOR * secondH) continue; // not a tall+short row
+    const shortLeft = Math.min(...others.map((id) => rowItems[id].x));
+    const shortRight = Math.max(...others.map((id) => rowItems[id].x + rowItems[id].w));
+    // Cursor must be in the short column horizontally, inside the tall member's
+    // vertical band, but NOT over a short member's own rect (that's a normal merge).
+    if (cursorX < shortLeft - 8 || cursorX > shortRight + 8) continue;
+    if (cursorY < T.y || cursorY > T.y + T.h) continue;
+    const overShort = others.some((id) => {
+      const r = rowItems[id];
+      return cursorY >= r.y - 2 && cursorY <= r.y + r.h + 2;
+    });
+    if (overShort) continue;
+    const shortTop = Math.min(...others.map((id) => rowItems[id].y));
+    const shortBot = Math.max(...others.map((id) => rowItems[id].y + rowItems[id].h));
+    const place: "top" | "bottom" = cursorY < (shortTop + shortBot) / 2 ? "top" : "bottom";
+    return { tallId, shortIds: others, place };
+  }
+  return null;
 }
 
 // Build the post-drag arrangement and reflow it into target rects + order.
@@ -642,7 +832,7 @@ export function planFlow(
 
   for (const fr of final) {
     const collide = fr.ids.length > 1 && rowMembersOverlapX(fr.ids, rowItems);
-    const res = layoutRowMembers(fr.ids, rowItems, y, colGap, opts.bounds, fr.repack || collide, margin);
+    const res = layoutRowMembers(fr.ids, rowItems, y, colGap, opts.bounds, fr.repack || collide, margin, opts.minWidths);
     if (res.order.length === 0) continue;
     Object.assign(rects, res.rects);
     order.push(...res.order);
