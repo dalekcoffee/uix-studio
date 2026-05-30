@@ -1,0 +1,42 @@
+# Dependencies & build output
+node_modules
+dist
+tsconfig.tsbuildinfo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# IDE
+.vscode
+.idea
+
+# Resonite example files used for reverse-engineering (not part of the app)
+UIX Template/
+Export References/
+
+# Dev artifacts & debug tooling
+SampleFiles/
+.snapshots/
+# Ignore dev scripts, but keep the bundled-asset generator (regenerates a
+# committed sprite in Images/sprites).
+scripts/*
+!scripts/gen-placeholder.ps1
+decode-*.cjs
+decode-*.mjs
+parse-bson.mjs
+test-*.cjs
+test-*.bson
+*.brson
+*.resonitepackage
+backup-*.zip
+
+# Personal working notes
+OVERNIGHT_NOTES.md
+
+# Claude Code project tool config (local only). CLAUDE.md is committed as
+# project documentation — it captures the reverse-engineered Resonite format.
+.claude/

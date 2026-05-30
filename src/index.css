@@ -1,0 +1,81 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  overscroll-behavior: none;
+  background: #0d0d0d;
+  color: #e2e8f0;
+  touch-action: pan-x pan-y;
+}
+
+/* Prevent gesture zoom on macOS Safari + pinch zoom on touch devices */
+html {
+  touch-action: manipulation;
+}
+
+button {
+  font-family: inherit;
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Block-editor hover affordance on canvas elements */
+.uix-block {
+  transition: box-shadow 80ms linear;
+}
+.uix-block:hover {
+  box-shadow: inset 0 0 0 1.5px rgba(56, 189, 248, 0.55) !important;
+  cursor: pointer;
+}
+
+.scroll-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 4px;
+}
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Editor scrollable fields hide the native browser scrollbar — their scrollbar
+ * is rendered outside on the right rail (DragLayer). Wheel/drag scrolling still
+ * works. Editor-only; never affects the exported in-game scroll area. */
+.hide-native-scrollbar {
+  scrollbar-width: none; /* Firefox */
+}
+.hide-native-scrollbar::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+/* Photoshop-style checkered transparency indicator. Used as the BG of any
+ * image preview that has a loaded image — communicates "transparent here"
+ * so users don't mistake a placeholder dark slate fill for "the image will
+ * sit on a dark background in Resonite". The actual rendering in-game shows
+ * the panel/world behind the transparent regions; the checker pattern is a
+ * faithful preview of that intent. */
+.bg-checker {
+  background-image:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.08) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.08) 75%, rgba(255, 255, 255, 0.08)),
+    linear-gradient(45deg, rgba(255, 255, 255, 0.08) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.08) 75%, rgba(255, 255, 255, 0.08));
+  background-size: 12px 12px;
+  background-position: 0 0, 6px 6px;
+  background-color: #1a1a1a;
+}

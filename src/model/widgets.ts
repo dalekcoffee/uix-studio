@@ -1,0 +1,345 @@
+import { v4 as uuid } from "uuid";
+import type { Slot, UixComponent, UixComponentType } from "./types";
+import type { PaletteItem } from "./palette";
+import type { Color } from "./theme";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Standalone "widget" builders for the Add menu.
+//
+// Composite controls (Checkbox, Toggle, Slider, …) are NOT single components —
+// they are multi-slot subtrees: a Checkbox needs a background Box + a Check-Icon
+// child carrying the marker; a Toggle needs a Pill + a sliding Knob child. The
+// exporter only wires their real FrooxEngine behaviour when those sibling slots
+// and components are present (hasBoolToggle = marker && Button && Image, etc.).
+// Adding a bare marker produced an empty/blank control.
+//
+// These builders reproduce the EXACT control subtrees authored in the
+// Experimental Panel (src/model/template.ts) — that template is the canonical
+// source of truth. Values here mirror it 1:1 so an added control looks and
+// behaves identically to the ones in the flagship preset. If the template's
+// control structure changes, update these to match.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function c(type: UixComponentType, props: Record<string, unknown>): UixComponent {
+  return { type, props };
+}
+
+function s(name: string, components: UixComponent[], children: Slot[] = []): Slot {
+  return { id: uuid(), name, locked: false, components, children };
+}
+
+function rgb(r: number, g: number, b: number, a = 1) {
+  return { r, g, b, a };
+}
+const white = () => rgb(0.9, 0.9, 0.9);
+
+function fillRT(): UixComponent {
+  return c("RectTransform", {
+    anchorMin: { x: 0, y: 0 }, anchorMax: { x: 1, y: 1 },
+    offsetMin: { x: 0, y: 0 }, offsetMax: { x: 0, y: 0 },
+    pivot: { x: 0.5, y: 0.5 },
+  });
+}
+
+// A left-hugging label that reserves `rightReserve` px on the right for the
+// control(s). Mirrors the row-label convention used throughout the template.
+function leftLabel(text: string, rightReserve: number): Slot {
+  return s("Label", [
+    c("RectTransform", {
+      anchorMin: { x: 0, y: 0 }, anchorMax: { x: 1, y: 1 },
+      offsetMin: { x: 0, y: 0 }, offsetMax: { x: -rightReserve, y: 0 },
+      pivot: { x: 0.5, y: 0.5 },
+    }),
+    c("Text", { content: text, size: 14, color: white(), horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+  ]);
+}
+
+// A control anchored to the row's right edge, `widthPx` wide and `heightPx`
+// tall, vertically centered. `extraComponents`/`children` carry the control's
+// markers + nested slots.
+function rightControl(
+  name: string,
+  widthPx: number,
+  heightPx: number,
+  components: UixComponent[],
+  children: Slot[] = [],
+): Slot {
+  return s(name, [
+    c("RectTransform", {
+      anchorMin: { x: 1, y: 0.5 }, anchorMax: { x: 1, y: 0.5 },
+      offsetMin: { x: -widthPx, y: -heightPx / 2 }, offsetMax: { x: 0, y: heightPx / 2 },
+      pivot: { x: 0.5, y: 0.5 },
+    }),
+    ...components,
+  ], children);
+}
+
+// The widget wrapper — a row centered on the canvas, cascaded down-right per
+// existing sibling so repeated adds don't stack exactly on top of each other.
+function wrap(
+  name: string,
+  widthPx: number,
+  heightPx: number,
+  cascade: number,
+  children: Slot[],
+  extraComponents: UixComponent[] = [],
+): Slot {
+  const i = cascade % 8;
+  const dx = i * 20;
+  const dy = -i * 20;
+  const hw = widthPx / 2;
+  const hh = heightPx / 2;
+  return s(name, [
+    c("RectTransform", {
+      anchorMin: { x: 0.5, y: 0.5 }, anchorMax: { x: 0.5, y: 0.5 },
+      offsetMin: { x: -hw + dx, y: -hh + dy }, offsetMax: { x: hw + dx, y: hh + dy },
+      pivot: { x: 0.5, y: 0.5 },
+    }),
+    ...extraComponents,
+  ], children);
+}
+
+// Standard interactive-button color set used by the template's controls.
+function btn(normal: ReturnType<typeof rgb>): UixComponent {
+  return c("Button", {
+    normalColor: normal,
+    highlightColor: white(),
+    pressColor: rgb(0.8, 0.8, 0.8),
+    disabledColor: rgb(0.5, 0.5, 0.5),
+    hoverVibrate: false,
+  });
+}
+
+// ── Per-control builders (mirror src/model/template.ts) ─────────────────────
+
+function buildCheckbox(cascade: number): Slot {
+  // Box (dark bg) → Check Icon (white check sprite + Button + Checkbox marker).
+  const checkIcon = s("Check Icon", [
+    fillRT(),
+    c("Image", { tint: white(), preserveAspect: true, spriteUrl: "", useCheckIcon: true }),
+    btn(white()),
+    c("Checkbox", { initialState: true }),
+  ]);
+  const box = rightControl("Box", 28, 28, [
+    c("Image", { tint: rgb(0.129, 0.149, 0.149), preserveAspect: false, spriteUrl: "" }),
+  ], [checkIcon]);
+  return wrap("Checkbox", 220, 36, cascade, [box, leftLabel("Enable feature", 40)]);
+}
+
+function buildToggle(cascade: number): Slot {
+  // Pill (color-driven) → Knob (white circle that slides on/off).
+  const knob = s("Knob", [
+    c("RectTransform", {
+      anchorMin: { x: 0.5, y: 0.5 }, anchorMax: { x: 0.5, y: 0.5 },
+      offsetMin: { x: -27, y: -13 }, offsetMax: { x: -1, y: 13 },
+      pivot: { x: 0.5, y: 0.5 },
+    }),
+    c("Image", { tint: rgb(0.95, 0.95, 0.95), preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+    c("Knob", {
+      offOffsetMin: { x: -27, y: -13 }, offOffsetMax: { x: -1, y: 13 },
+      onOffsetMin:  { x: 1, y: -13 },   onOffsetMax:  { x: 27, y: 13 },
+    }),
+  ]);
+  const pill = rightControl("Pill", 60, 32, [
+    c("Image", { tint: rgb(0.141, 0.141, 0.141), preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+    btn(white()),
+    c("Toggle", { initialState: false, offColor: rgb(0.141, 0.141, 0.141), onColor: rgb(0.18, 0.36, 0.60) }),
+  ], [knob]);
+  return wrap("Toggle", 220, 36, cascade, [pill, leftLabel("Online", 72)]);
+}
+
+function buildSlider(cascade: number): Slot {
+  const track = rightControl("Track", 200, 16, [
+    c("Image", { tint: rgb(0.129, 0.149, 0.149), preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+    c("Slider", { value: 0.6, min: 0, max: 1, direction: "Horizontal", integers: false, power: 1, fillColor: rgb(0.18, 0.36, 0.6), clamp: true, requireInitialPress: true }),
+  ]);
+  return wrap("Slider", 340, 36, cascade, [track, leftLabel("Volume", 212)]);
+}
+
+function buildProgressBar(cascade: number): Slot {
+  const track = rightControl("Track", 200, 12, [
+    c("Image", { tint: rgb(0.129, 0.149, 0.149), preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+    c("ProgressBar", { value: 0.4, min: 0, max: 1, direction: "Horizontal", fillColor: rgb(0.18, 0.36, 0.6) }),
+  ]);
+  return wrap("Progress Bar", 340, 36, cascade, [track, leftLabel("Progress", 212)]);
+}
+
+function buildDropdown(cascade: number): Slot {
+  const trigger = rightControl("Trigger", 200, 32, [
+    c("Image", { tint: rgb(0.14, 0.16, 0.20), preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+    c("Button", { normalColor: rgb(0.14, 0.16, 0.20), highlightColor: rgb(0.22, 0.26, 0.32), pressColor: rgb(0.10, 0.12, 0.16), disabledColor: rgb(0.3, 0.3, 0.3), hoverVibrate: false }),
+    c("Dropdown", { options: "Low\nMedium\nHigh", initialIndex: 1, optionFillColor: rgb(0.14, 0.16, 0.20), optionLabelColor: white() }),
+  ]);
+  return wrap("Dropdown", 340, 36, cascade, [trigger, leftLabel("Quality", 212)]);
+}
+
+function buildColorPicker(cascade: number, buttonA?: Color): Slot {
+  // Swatch (Image showing the current color + Button + ColorPicker marker). The
+  // exporter wires a ButtonEditColorX onto this slot so clicking opens
+  // Resonite's native color picker, writing the result back into the swatch
+  // Image.Tint (and the exposed "📚 Value" colorX variable).
+  // Default the swatch to the active theme's Button A color so a freshly added
+  // picker matches the panel out of the box; the user can recolor it freely in
+  // the Inspector (ColorPicker → Initial Color). Falls back to the dark theme's
+  // Button A when no theme is threaded in (e.g. template/standalone callers).
+  const initial = buttonA ?? rgb(0.18, 0.36, 0.6, 1);
+  const swatch = rightControl("Swatch", 100, 28, [
+    c("Image", { tint: initial, preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+    c("Button", { normalColor: initial, highlightColor: initial, pressColor: initial, disabledColor: initial, hoverVibrate: false }),
+    c("ColorPicker", { initialColor: initial, alpha: true, hdr: false }),
+  ]);
+  return wrap("Color Picker", 340, 36, cascade, [swatch, leftLabel("Color Picker", 112)]);
+}
+
+function buildTextField(cascade: number): Slot {
+  const input = rightControl("Input", 280, 32, [
+    c("Image", { tint: rgb(0.12, 0.12, 0.12), preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+    c("TextField", {
+      placeholder: "", textContent: "Edit me", textAlign: "Center", fontSize: 16,
+      textColor: rgb(0.9, 0.9, 0.9), placeholderColor: rgb(0.45, 0.45, 0.45),
+      backgroundTint: rgb(0.12, 0.12, 0.12),
+    }),
+  ]);
+  return wrap("Text Field", 400, 36, cascade, [input, leftLabel("Text", 292)]);
+}
+
+function buildReferenceField(cascade: number): Slot {
+  const field = rightControl("Field", 280, 32, [
+    c("ReferenceField", {
+      fieldColor: rgb(0.024, 0.028, 0.036, 1),
+      buttonColor: rgb(0.024, 0.028, 0.036, 1),
+      textColor: rgb(0.88, 0.88, 0.88, 1),
+    }),
+  ]);
+  return wrap("Reference Field", 400, 36, cascade, [field, leftLabel("Reference", 292)]);
+}
+
+// One radio option: a circular outer ring (Image + Button + Radio marker) with
+// the selected dot child synthesized by the exporter, plus an inline label.
+function radioOption(name: string, label: string, groupId: string, rightPx: number, widthPx: number, index: number, selected: boolean): Slot {
+  const ring = s(name, [
+    c("RectTransform", {
+      anchorMin: { x: 0, y: 0.5 }, anchorMax: { x: 0, y: 0.5 },
+      offsetMin: { x: 0, y: -12 }, offsetMax: { x: 24, y: 12 },
+      pivot: { x: 0.5, y: 0.5 },
+    }),
+    c("Image", { tint: rgb(0.18, 0.18, 0.18), preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+    c("Button", { normalColor: rgb(0.18, 0.18, 0.18), highlightColor: rgb(0.30, 0.30, 0.30), pressColor: rgb(0.10, 0.10, 0.10), disabledColor: rgb(0.25, 0.25, 0.25), hoverVibrate: false }),
+    c("Radio", { groupId, index, initiallySelected: selected, selectedColor: rgb(0.95, 0.95, 0.95) }),
+  ]);
+  const inner = s("Label", [
+    c("RectTransform", {
+      anchorMin: { x: 0, y: 0 }, anchorMax: { x: 1, y: 1 },
+      offsetMin: { x: 30, y: 0 }, offsetMax: { x: 0, y: 0 },
+      pivot: { x: 0.5, y: 0.5 },
+    }),
+    c("Text", { content: label, size: 14, color: white(), horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+  ]);
+  return s(`Radio ${name}`, [
+    c("RectTransform", {
+      anchorMin: { x: 1, y: 0 }, anchorMax: { x: 1, y: 1 },
+      offsetMin: { x: -(rightPx + widthPx), y: 0 }, offsetMax: { x: -rightPx, y: 0 },
+      pivot: { x: 0.5, y: 0.5 },
+    }),
+  ], [ring, inner]);
+}
+
+function buildRadio(cascade: number): Slot {
+  // A single radio option still needs a RadioGroup marker (holds the shared
+  // ValueField<int>) on its parent so it functions as a one-item group.
+  return wrap("Radio", 220, 36, cascade, [
+    leftLabel("Option", 40),
+    radioOption("Option", "", "group1", 0, 24, 0, true),
+  ], [c("RadioGroup", { groupId: "group1", initialIndex: 0 })]);
+}
+
+function buildRadioGroup(cascade: number): Slot {
+  return wrap("Radio Group", 420, 36, cascade, [
+    leftLabel("Mode", 252),
+    radioOption("Auto", "Auto", "mode", 160, 90, 0, true),
+    radioOption("On", "On", "mode", 80, 72, 1, false),
+    radioOption("Off", "Off", "mode", 0, 72, 2, false),
+  ], [c("RadioGroup", { groupId: "mode", initialIndex: 0 })]);
+}
+
+function buildSpinner(cascade: number): Slot {
+  // A standalone loading indicator: a single square slot with an Image carrying
+  // the useSpinnerIcon flag. The exporter (hasSpinner branch) replaces the
+  // Image with an animated procedural OutlinedArc and appends a boolean
+  // "📚 Value" slot that drives the arc's Enabled field — so the spinner can be
+  // shown/hidden in-game without deactivating the slot (no layout reflow).
+  // Mirrors the Loading Spinner in src/model/template.ts.
+  return wrap("Loading Spinner", 64, 64, cascade, [], [
+    c("Image", { tint: rgb(0.272, 0.567, 0.842), preserveAspect: true, spriteUrl: "", useSpinnerIcon: true }),
+  ]);
+}
+
+function buildScrollArea(cascade: number): Slot {
+  // A vertical scroll viewport with enough stacked text rows to overflow the
+  // viewport so scrolling is meaningful. Each row carries a LayoutElement so the
+  // exporter's auto-stacking VerticalLayout sizes them.
+  const rows: Slot[] = [];
+  for (let i = 0; i < 8; i++) {
+    rows.push(s(`Item ${i + 1}`, [
+      fillRT(),
+      c("LayoutElement", { minWidth: -1, preferredWidth: -1, flexibleWidth: -1, minHeight: 32, preferredHeight: 32, flexibleHeight: -1, orderOffset: i }),
+      c("Image", { tint: rgb(0.12, 0.12, 0.12), preserveAspect: false, spriteUrl: "", cornerRadius: 8 }),
+    ], [
+      s("Label", [
+        fillRT(),
+        c("Text", { content: `Item ${i + 1}`, size: 14, color: white(), horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+      ]),
+    ]));
+  }
+  const viewport = s("Scroll Viewport", [
+    fillRT(),
+    c("ScrollArea", {
+      direction: "Vertical",
+      backgroundTint: rgb(0.10, 0.11, 0.14, 1),
+      spacing: 8, padding: 8,
+      showScrollbar: true,
+      scrollbarTrackTint: rgb(0.15, 0.17, 0.21, 1),
+      scrollbarThumbTint: rgb(0.55, 0.60, 0.68, 1),
+    }),
+  ], rows);
+  return wrap("Scroll Area", 300, 200, cascade, [viewport]);
+}
+
+// ── Registry ────────────────────────────────────────────────────────────────
+
+const BUILDERS: Partial<Record<PaletteItem, (cascade: number) => Slot>> = {
+  Checkbox: buildCheckbox,
+  Toggle: buildToggle,
+  Slider: buildSlider,
+  ProgressBar: buildProgressBar,
+  Dropdown: buildDropdown,
+  ColorPicker: buildColorPicker,
+  TextField: buildTextField,
+  ReferenceField: buildReferenceField,
+  Radio: buildRadio,
+  RadioGroup: buildRadioGroup,
+  ScrollArea: buildScrollArea,
+  // Widget-only pseudo-type (not a UixComponent) — see palette.ts WIDGET_ONLY_ITEMS.
+  Spinner: buildSpinner,
+};
+
+/** True for composite control types that should be added as a full widget
+ *  subtree (matching the Experimental Panel) rather than a bare component. */
+export function isWidgetType(type: PaletteItem): boolean {
+  return type in BUILDERS;
+}
+
+/** Build a standalone widget subtree for `type`, or null if `type` is a simple
+ *  single-component element. `cascade` is the sibling count, used to offset
+ *  repeated adds so they don't stack exactly. */
+export function buildWidget(
+  type: PaletteItem,
+  cascade: number,
+  buttonA?: Color,
+): Slot | null {
+  // Color Picker takes the active theme's Button A so its swatch defaults
+  // in-theme; every other widget is theme-agnostic at build time.
+  if (type === "ColorPicker") return buildColorPicker(cascade, buttonA);
+  const fn = BUILDERS[type];
+  return fn ? fn(cascade) : null;
+}
