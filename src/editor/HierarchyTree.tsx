@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { useStore } from "../state/store";
 import type { Slot } from "../model/types";
 import { controlDisplayName } from "../model/controlName";
@@ -18,8 +18,18 @@ export default function HierarchyTree() {
   const toggle = useStore((s) => s.toggleLeftPanel);
   const collapseAll = useStore((s) => s.collapseAll);
   const expandAll = useStore((s) => s.expandAll);
+  const selectedSlotId = useStore((s) => s.selectedSlotId);
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
   const draggingRef = useRef<string | null>(null);
+
+  // IDs of every ancestor of the selected slot (excluding the slot itself).
+  // Rows in this set get a subtle "contains selection" highlight so the user
+  // can see where a selected descendant lives even while parents stay collapsed
+  // — we intentionally do NOT auto-expand.
+  const ancestorIds = useMemo(
+    () => collectAncestorIds(root, selectedSlotId),
+    [root, selectedSlotId],
+  );
 
   if (hidden) {
     return (
@@ -77,6 +87,7 @@ export default function HierarchyTree() {
           dropTarget={dropTarget}
           setDropTarget={setDropTarget}
           draggingRef={draggingRef}
+          ancestorIds={ancestorIds}
         />
       </div>
       <SidebarMenus />
@@ -90,10 +101,13 @@ interface SlotNodeProps {
   dropTarget: DropTarget | null;
   setDropTarget: (t: DropTarget | null) => void;
   draggingRef: React.MutableRefObject<string | null>;
+  ancestorIds: Set<string>;
 }
 
-function SlotNode({ slot, depth, dropTarget, setDropTarget, draggingRef }: SlotNodeProps) {
+function SlotNode({ slot, depth, dropTarget, setDropTarget, draggingRef, ancestorIds }: SlotNodeProps) {
   const selected = useStore((s) => s.selectedSlotId === slot.id);
+  // True when a (possibly collapsed) descendant of this row is the selection.
+  const containsSelection = !selected && ancestorIds.has(slot.id);
   const collapsed = useStore((s) => !!s.collapsed[slot.id]);
   const select = useStore((s) => s.select);
   const addChild = useStore((s) => s.addChild);
@@ -221,9 +235,11 @@ function SlotNode({ slot, depth, dropTarget, setDropTarget, draggingRef }: SlotN
             ? "bg-sky-500/20 text-sky-200 ring-1 ring-sky-500/40"
             : isDropInside
               ? "bg-sky-500/10 ring-1 ring-sky-500/60"
-              : locked
-                ? "text-slate-500 hover:bg-slate-800"
-                : "text-slate-300 hover:bg-slate-800"
+              : containsSelection
+                ? "bg-sky-500/5 text-sky-300/90 hover:bg-slate-800"
+                : locked
+                  ? "text-slate-500 hover:bg-slate-800"
+                  : "text-slate-300 hover:bg-slate-800"
         }`}
       >
         {hasChildren ? (
@@ -325,6 +341,7 @@ function SlotNode({ slot, depth, dropTarget, setDropTarget, draggingRef }: SlotN
               dropTarget={dropTarget}
               setDropTarget={setDropTarget}
               draggingRef={draggingRef}
+              ancestorIds={ancestorIds}
             />
           ))}
     </div>
@@ -338,6 +355,29 @@ function DropIndicator({ depth }: { depth: number }) {
       className="my-[1px] h-[2px] rounded bg-sky-400"
     />
   );
+}
+
+// Walk from root to `targetId`, returning the set of ancestor IDs along the
+// path (NOT including the target itself). Empty when nothing is selected or the
+// target is the root. Used to faintly highlight rows that contain the selection.
+function collectAncestorIds(root: Slot, targetId: string | null): Set<string> {
+  const ids = new Set<string>();
+  if (!targetId || targetId === root.id) return ids;
+  function walk(node: Slot, trail: string[]): boolean {
+    if (node.id === targetId) {
+      trail.forEach((id) => ids.add(id));
+      return true;
+    }
+    for (const c of node.children) {
+      if (walk(c, [...trail, node.id])) return true;
+    }
+    return false;
+  }
+  walk(root, []);
+  // The Canvas (root) is an ancestor of everything, so highlighting it conveys
+  // nothing — drop it from the set.
+  ids.delete(root.id);
+  return ids;
 }
 
 function findParentInRoot(root: Slot, id: string): Slot | null {
