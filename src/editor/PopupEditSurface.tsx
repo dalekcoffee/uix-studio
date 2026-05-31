@@ -1,6 +1,7 @@
 import { useStore } from "../state/store";
 import type { Slot } from "../model/types";
 import { RenderedSlot } from "./render/renderSlot";
+import { RESONITE_FONT } from "./render/resoniteFont";
 import { computeChildRect, getRectTransform } from "./render/rectTransform";
 
 // The popup editing surface — a floating "secondary canvas" that lifts the
@@ -77,6 +78,7 @@ export default function PopupEditSurface({ card, shift, scale, canvasSize }: Pro
             height: canvasSize.h,
             transform: `scale(${scale})`,
             transformOrigin: "top left",
+            fontFamily: RESONITE_FONT,
           }}
           // This scaled canvas-space fills the lifted wrapper, so it — not the
           // wrapper — is what a click in the dead space around the card actually

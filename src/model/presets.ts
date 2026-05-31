@@ -2505,14 +2505,18 @@ function buildShowcasePanel(): Slot {
   ]);
 
   // Row table: name, control width (to reserve label room), height, builder.
+  // Control widths are tuned so the LABEL keeps enough room to render on one
+  // line in Resonite's Noto Sans (measured: ~76px rect was too tight for
+  // "Dropdown"/"Progress Bar"/"Text Field", which char-wrapped in-game). The
+  // preview now renders the same font, so this stays honest — see resoniteFont.ts.
   const scrollRows: Slot[] = [
     { n: "Toggle",       w: 60,  h: 32, b: exToggle },
     { n: "Checkbox",     w: 30,  h: 30, b: exCheckbox },
     { n: "Color Picker", w: 90,  h: 28, b: exColor },
-    { n: "Dropdown",     w: 150, h: 32, b: exDropdown },
+    { n: "Dropdown",     w: 130, h: 32, b: exDropdown },
     { n: "Slider",       w: 150, h: 14, b: exSlider },
-    { n: "Progress Bar", w: 150, h: 12, b: exProgress },
-    { n: "Text Field",   w: 170, h: 32, b: exTextField },
+    { n: "Progress Bar", w: 108, h: 12, b: exProgress },
+    { n: "Text Field",   w: 136, h: 32, b: exTextField },
     { n: "Spinner",      w: 30,  h: 30, b: exSpinner },
     { n: "Popup Dialog", w: 110, h: 34, b: exPopup },
   ].map((f, i) => scrollRow(`${f.n} Row`, f.n, f.w, f.b(rightRT(f.w, f.h)), i));

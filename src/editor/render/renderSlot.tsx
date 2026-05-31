@@ -622,6 +622,11 @@ function TextPreview({ props, rect }: { props: any; rect: Rect }) {
         lineHeight: 1.2,
         textAlign: align.toLowerCase() as React.CSSProperties["textAlign"],
         whiteSpace: "pre-wrap",
+        // Mirror Resonite's wrapping exactly: wrap at spaces (word wrap), and
+        // only char-break a single word when it physically can't fit its box —
+        // Resonite's own last-resort fallback. break-word (not break-all)
+        // breaks ONLY on overflow, so normal words stay intact.
+        overflowWrap: "break-word",
         overflow: "hidden",
       }}
     >

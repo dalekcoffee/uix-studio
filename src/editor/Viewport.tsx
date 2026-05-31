@@ -1,6 +1,7 @@
 import { useMemo, useRef, useEffect, useState, useCallback } from "react";
 import { useStore, type ViewportTransform } from "../state/store";
 import { RenderedSlot } from "./render/renderSlot";
+import { RESONITE_FONT } from "./render/resoniteFont";
 import { findSlot } from "../model/operations";
 import type { Rect } from "./render/rectTransform";
 import DragLayer from "./DragLayer";
@@ -389,6 +390,9 @@ export default function Viewport() {
             backgroundSize: "24px 24px",
             backgroundPosition: "0 0, 12px 12px",
             border: "1px solid #1e293b",
+            // Render in-world text in Resonite's own Noto Sans so editor
+            // wrapping matches the game (see resoniteFont.ts).
+            fontFamily: RESONITE_FONT,
           }}
         >
           <RenderedSlot slot={root} rect={rootRect} isRoot />
