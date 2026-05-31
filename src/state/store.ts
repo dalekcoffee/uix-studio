@@ -56,10 +56,12 @@ import {
   planFlow,
   reflowAbsolute,
   reflowLayoutOrder,
+  resolveAddContainerId,
   rowItemsOf,
   rowsWithout,
   type DropSpec,
   type ReflowResult,
+  type SnapRow,
 } from "../editor/render/snapFlow";
 
 export type AlignAxis = "h" | "v";
@@ -715,6 +717,50 @@ export const useStore = create<State & Actions>((set, get) => {
     return applyResultToContainer(root, rootC, result, canvasSize);
   }
 
+  // Re-stack the Canvas root after a top-level DUPLICATE so the copy sits
+  // directly below the original — never on top of it and never merged side-by-side
+  // with whatever element happened to sit just below.
+  //
+  // Why not reuse snapReflowRoot: that re-derives row order purely from each
+  // element's y. The copy starts at the original's exact position, and any attempt
+  // to nudge it "into the gap" below the original makes it vertically overlap the
+  // NEXT element — groupRows then clusters them into one row and the reflow packs
+  // the copy beside that element (the "ended up to the right of my buttons" bug).
+  // Instead we group the rows from the layout WITHOUT the copy (so ordering
+  // reflects the real design), then splice the copy in as its own row immediately
+  // after the row that holds the original, and stack that explicit order. The copy
+  // keeps the original's x/width; everything below it is pushed down.
+  function reflowRootInsertAfter(root: Slot, originalId: string, copyId: string): Slot {
+    root = fitColumnHeights(root);
+    const canvasSize = canvasSizeOf(root);
+    const rootC = getContainers(root, canvasSize).find((c) => c.isRoot);
+    if (!rootC) return root;
+    const allItems = rowItemsOf(root, rootC, canvasSize);
+    const copyItem = allItems.find((i) => i.id === copyId);
+    if (!copyItem) return root;
+    const rows = groupRows(allItems.filter((i) => i.id !== copyId));
+    const rowItems: Record<string, Rect> = {};
+    for (const it of allItems) rowItems[it.id] = it.rect;
+    const copyRow: SnapRow = {
+      ids: [copyId],
+      rect: copyItem.rect,
+      top: copyItem.rect.y,
+      height: copyItem.rect.h,
+    };
+    const idx = rows.findIndex((r) => r.ids.includes(originalId));
+    if (idx < 0) rows.push(copyRow);
+    else rows.splice(idx + 1, 0, copyRow);
+    const result = reflowAbsolute(rows, rowItems, {
+      rowGap: get().snap.rowGap,
+      colGap: get().snap.colGap,
+      anchorY: rows[0].top,
+      bottomMargin: APPEND_MARGIN,
+      bounds: { left: rootC.absRect.x, right: rootC.absRect.x + rootC.absRect.w },
+      minWidths: minWidthsFor(root, rootC, canvasSize),
+    });
+    return applyResultToContainer(root, rootC, result, canvasSize);
+  }
+
   // Default collapse state — root expanded so the user sees the Canvas's
   // immediate children, every nested slot collapsed. Real templates have ~30
   // slots that fully expanded would dwarf the panel and bury the actual
@@ -780,10 +826,20 @@ export const useStore = create<State & Actions>((set, get) => {
 
     duplicate: (id) => {
       if (get().root.id === id) return;
-      { const s = findSlot(get().root, id); if (s && isStructuralSlot(s)) return; }
-      const { root: next, newId } = duplicateSlot(get().root, id);
+      const before = get().root;
+      { const s = findSlot(before, id); if (s && isStructuralSlot(s)) return; }
+      // In snap mode a duplicate must never sit on top of its original. For a
+      // top-level (Canvas) element we re-stack so the copy lands directly below
+      // the original and everything beneath shifts down. (Inside a layout
+      // container — ScrollArea/Column — duplicateSlot already inserts the copy
+      // right after the original in child order, so the layout engine spaces them
+      // with no overlap and no fix is needed.)
+      const atRoot = findParent(before, id)?.id === before.id;
+      const snapRootDup = get().editMode === "snap" && atRoot;
+      const { root: next, newId } = duplicateSlot(before, id);
       if (!newId) return;
-      commit(next);
+      const result = snapRootDup ? reflowRootInsertAfter(next, id, newId) : next;
+      commit(result);
       set({ selectedSlotId: newId });
     },
 
@@ -890,79 +946,84 @@ export const useStore = create<State & Actions>((set, get) => {
 
     attachComponent: (slotId, type) => {
       const r = get().root;
-      const targetIsRoot = !slotId || slotId === r.id;
+      // A new element ALWAYS lands at the bottom of the page (Canvas root), never
+      // nested inside the element the user right-clicked — UNLESS the click
+      // resolves to a nested container (ScrollArea / Column / popup card), where
+      // it lands at the bottom of THAT container instead. resolveAddContainerId
+      // walks self-then-ancestors for the nearest container, else the root.
+      const parentId = resolveAddContainerId(r, slotId);
+      const parentIsRoot = parentId === r.id;
+      const snapMode = get().editMode === "snap";
       // Composite controls (Checkbox, Toggle, Slider, …) are multi-slot widgets,
       // not single components. Build the full source-of-truth subtree (matching
       // the Experimental Panel — Box+CheckIcon for a checkbox, Pill+Knob for a
-      // toggle, etc.) and nest it under the target. Adding a bare marker
-      // produced a blank/non-functional control.
+      // toggle, etc.). Adding a bare marker produced a blank/non-functional control.
+      //
+      // Append to the resolved container: under the Canvas root, drop below
+      // existing content (snap mode reflows so the rest stacks cleanly with no
+      // overlap; it appends WITHOUT growing the canvas — the reflow grows it). A
+      // nested container just pushes to the end of its children = the bottom of
+      // its own flow (layout containers position by child order).
       if (isWidgetType(type)) {
-        const parentId = targetIsRoot ? r.id : slotId!;
         const widget = buildWidget(type, findSlot(r, parentId)?.children.length ?? r.children.length, get().theme.buttonA);
         if (widget) {
-          // Under the Canvas, drop the widget below existing content. On a
-          // normal slot, just nest it as-is. Snap mode reflows so the new
-          // element shifts the others into a clean stack instead of relying on
-          // anchors (which can leave it overlapping); it appends WITHOUT growing
-          // the canvas (the reflow grows it) — see appendChildAtBottom.
-          const snapMode = targetIsRoot && get().editMode === "snap";
-          let next = targetIsRoot
-            ? appendChildAtBottom(r, widget, !snapMode)
-            : addChildSlot(r, parentId, widget);
-          if (snapMode) next = snapReflowRoot(next);
+          let next: Slot;
+          if (parentIsRoot) {
+            next = appendChildAtBottom(r, widget, !snapMode);
+            if (snapMode) next = snapReflowRoot(next);
+          } else {
+            next = addChildSlot(r, parentId, widget);
+          }
           commit(next);
           set({ selectedSlotId: widget.id });
           return;
         }
       }
       // Past the widget guard, every remaining type is a real single component
-      // (widget-only pseudo-types like "Spinner" returned above), so narrow.
+      // (widget-only pseudo-types like "Spinner" returned above), so narrow. Each
+      // becomes its OWN new slot (one graphic per slot) dropped at the bottom of
+      // the resolved container — never attached onto the clicked slot.
       const ct = type as UixComponentType;
-      // If the user is adding a component while the Canvas (root) is selected
-      // or nothing is selected, create a fresh child slot to hold it instead
-      // of polluting the Canvas slot itself. Matches the user-facing rule:
-      // "the Canvas is locked — components go on their own slots". The new slot
-      // is appended below existing content (200×150 row) and the canvas grows
-      // to fit — so a burst of adds stacks downward instead of piling up at the
-      // center.
-      if (targetIsRoot) {
-        const child = newSlot(ct === "Spacer" ? "Spacer" : ct);
-        if (ct === "Spacer") {
-          // A thin, near-full-width row: invisible filler that reserves height.
-          const w = Math.max(40, canvasSizeOf(r).w - 48);
-          child.components.push({
-            type: "RectTransform",
-            props: {
-              anchorMin: { x: 0.5, y: 0.5 },
-              anchorMax: { x: 0.5, y: 0.5 },
-              offsetMin: { x: -w / 2, y: -16 },
-              offsetMax: { x: w / 2, y: 16 },
-              pivot: { x: 0.5, y: 0.5 },
-            },
-          });
-        } else {
-          child.components.push({
-            type: "RectTransform",
-            props: {
-              anchorMin: { x: 0.5, y: 0.5 },
-              anchorMax: { x: 0.5, y: 0.5 },
-              offsetMin: { x: -100, y: -75 },
-              offsetMax: { x: 100, y: 75 },
-              pivot: { x: 0.5, y: 0.5 },
-            },
-          });
-        }
-        const snapMode = get().editMode === "snap";
-        // Snap mode appends without growing the canvas (the reflow grows it),
-        // so anchored siblings don't slide into the newcomer's band.
-        let next = appendChildAtBottom(r, child, !snapMode);
+      const child = newSlot(ct === "Spacer" ? "Spacer" : ct);
+      if (ct === "Spacer") {
+        // A thin, near-full-width row: invisible filler that reserves height.
+        const w = Math.max(40, canvasSizeOf(r).w - 48);
+        child.components.push({
+          type: "RectTransform",
+          props: {
+            anchorMin: { x: 0.5, y: 0.5 },
+            anchorMax: { x: 0.5, y: 0.5 },
+            offsetMin: { x: -w / 2, y: -16 },
+            offsetMax: { x: w / 2, y: 16 },
+            pivot: { x: 0.5, y: 0.5 },
+          },
+        });
+      } else {
+        child.components.push({
+          type: "RectTransform",
+          props: {
+            anchorMin: { x: 0.5, y: 0.5 },
+            anchorMax: { x: 0.5, y: 0.5 },
+            offsetMin: { x: -100, y: -75 },
+            offsetMax: { x: 100, y: 75 },
+            pivot: { x: 0.5, y: 0.5 },
+          },
+        });
+      }
+      let next: Slot;
+      if (parentIsRoot) {
+        // Append below content, then add the component BEFORE reflowing so the
+        // reflow's content-based min-width measures the real control, not a bare
+        // slot. Snap appends without growing the canvas (the reflow grows it).
+        next = appendChildAtBottom(r, child, !snapMode);
         next = addComponent(next, child.id, ct);
         if (snapMode) next = snapReflowRoot(next);
-        commit(next);
-        set({ selectedSlotId: child.id });
-        return;
+      } else {
+        next = addChildSlot(r, parentId, child);
+        next = addComponent(next, child.id, ct);
       }
-      commit(addComponent(r, slotId, ct));
+      commit(next);
+      set({ selectedSlotId: child.id });
     },
 
     detachComponent: (slotId, type) => commit(removeComponent(get().root, slotId, type)),

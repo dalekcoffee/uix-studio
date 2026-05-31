@@ -9,6 +9,7 @@ import {
 } from "../model/palette";
 import { useStore } from "../state/store";
 import { findSlot } from "../model/operations";
+import { resolveAddContainerId } from "./render/snapFlow";
 import { useDismissable } from "./useDismissable";
 
 export default function AddMenu() {
@@ -18,35 +19,32 @@ export default function AddMenu() {
   const root = useStore((s) => s.root);
   const attach = useStore((s) => s.attachComponent);
 
-  const slot = selectedId ? findSlot(root, selectedId) : null;
-  // No selection (or Canvas root selected) → adding will spawn a fresh child
-  // slot under the Canvas. Treat the menu's "already attached" set as empty
-  // in that case since the new slot starts blank.
-  const autoCreate = !slot || slot.id === root.id;
-  const present = new Set(autoCreate ? [] : (slot?.components.map((c) => c.type) ?? []));
+  // Adding always spawns a NEW element at the bottom of the page (or the bottom
+  // of the nearest nested container the selection resolves to) — never onto the
+  // selected slot. So nothing is ever "already attached"; every type is offered.
+  const destId = resolveAddContainerId(root, selectedId ?? null);
+  const destSlot = findSlot(root, destId);
+  const destIsRoot = destId === root.id;
+  const present = new Set<UixComponentType>();
 
   const close = useCallback(() => setOpen(false), []);
   useDismissable(open, close, ref);
 
   function add(type: PaletteItem) {
-    // Auto-create branches inside the store when the slotId is the root id
-    // (or empty). Otherwise targets the selected slot.
-    attach(autoCreate ? root.id : slot!.id, type);
+    // The store routes the add to the resolved container (page bottom or nested
+    // container) — just pass the current selection through.
+    attach(selectedId ?? root.id, type);
     setOpen(false);
   }
 
-  const headerLabel = autoCreate ? "Adding to" : "Add component to";
-  const headerValue = autoCreate ? "new slot under Canvas" : slot!.name;
+  const headerLabel = "Adding to";
+  const headerValue = destIsRoot ? "bottom of the page" : `bottom of ${destSlot?.name ?? "container"}`;
 
   return (
     <div className="relative" ref={ref}>
       <button
         onClick={() => setOpen((v) => !v)}
-        title={
-          autoCreate
-            ? "Add a new slot under the Canvas with the chosen component"
-            : `Add a component to “${slot!.name}”`
-        }
+        title={`Add a new element to ${headerValue}`}
         className="rounded border border-sky-500 bg-sky-600 px-2 py-1 text-white transition hover:bg-sky-500"
       >
         + Add ▾

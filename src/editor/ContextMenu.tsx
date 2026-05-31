@@ -11,6 +11,7 @@ import {
 import { findSlot } from "../model/operations";
 import { isStructuralSlot } from "../model/structural";
 import { isLayoutManaged } from "./render/slotRect";
+import { resolveAddContainerId } from "./render/snapFlow";
 import { useDismissable } from "./useDismissable";
 
 const ALIGN_BUTTONS: Array<{ label: string; caption: string; title: string; axis: AlignAxis; mode: AlignMode }> = [
@@ -79,13 +80,15 @@ export default function ContextMenu() {
   const isRoot = slot?.id === root.id;
   const hasRT = !!slot?.components.some((c) => c.type === "RectTransform");
   const layoutManaged = slot ? isLayoutManaged(root, slot.id) : false;
-  // When targeting the Canvas root, the store routes attachComponent to a
-  // fresh child slot. Mirror that intent here: pretend nothing is attached so
-  // every component is offered, and label the section accordingly.
-  const autoCreate = isRoot;
-  const present = new Set(
-    autoCreate ? [] : (slot?.components.map((c) => c.type) ?? []),
-  );
+  // Adding always spawns a NEW element at the bottom of the page (or the bottom
+  // of the nearest nested container the click resolves to) — never onto the
+  // clicked slot. So every component is always offered (nothing is "already
+  // attached"), and the header names where the new element will land.
+  const destId = resolveAddContainerId(root, ctx.slotId ?? null);
+  const destSlot = findSlot(root, destId);
+  const destIsRoot = destId === root.id;
+  const destLabel = destIsRoot ? "bottom of the page" : `bottom of ${destSlot?.name ?? "container"}`;
+  const present = new Set<UixComponentType>();
 
   function addComponent(t: PaletteItem) {
     if (!slot) return;
@@ -109,13 +112,10 @@ export default function ContextMenu() {
       {slot ? (
         <div className="border-b border-slate-800 px-3 py-2">
           <div className="text-[10px] uppercase tracking-wide text-slate-500">
-            {autoCreate ? "Adding to" : "Slot"}
+            {isRoot ? "Canvas" : "Slot"}
           </div>
-          <div
-            className="truncate text-sm text-slate-100"
-            title={autoCreate ? "new slot under Canvas" : slot.name}
-          >
-            {autoCreate ? "new slot under Canvas" : slot.name}
+          <div className="truncate text-sm text-slate-100" title={slot.name}>
+            {slot.name}
           </div>
         </div>
       ) : (
@@ -224,9 +224,13 @@ export default function ContextMenu() {
           </Section>
         )}
 
-        {/* Add Component */}
+        {/* Add Component — always lands as a new element at the bottom of the
+            page (or the nearest nested container), never onto this slot. */}
         {slot && (
           <>
+            <div className="border-b border-slate-800 px-3 py-1.5 text-[10px] text-slate-500">
+              New elements add to the <span className="text-slate-300">{destLabel}</span>
+            </div>
             {PALETTE_GROUPS.map((g) => (
               <AddSection
                 key={g.label}

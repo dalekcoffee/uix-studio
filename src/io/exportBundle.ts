@@ -49,8 +49,10 @@ const PILL_SPRITE_BYTES = 13225;
 // left and one big BoxCollider/Hyperlink to uix.dalek.coffee covering both.
 const CREDITS_TEXT_HASH  = "b97bbd70290cd774c5c5524956b39a1c47db1900c5cfa724ae1bb11bf6a49595";
 const CREDITS_TEXT_BYTES = 16568;
-const IMAGE_PLACEHOLDER_HASH  = "305cfc1a4cf7f8a4ce0c0abdea3b757eb953b59a10125ca5bd1df06c11605e2a";
-const IMAGE_PLACEHOLDER_BYTES = 54363;
+const IMAGE_PLACEHOLDER_HASH  = "e38064f93c6984cc88189db8a41566bf064f83001ef1630917193551eda9358a";
+const IMAGE_PLACEHOLDER_BYTES = 48689;
+const IMAGE_ICON_HASH  = "9a61203b3a3b092cbbcc14dc3bfd008c7188b389e7acec600ea3132177306ffe";
+const IMAGE_ICON_BYTES = 3489;
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const hash = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
@@ -246,6 +248,7 @@ export async function exportBundleZip(
   const pillSpriteBytes = await fetchAsset(`./sprites/${PILL_SPRITE_HASH}`);
   const creditsTextBytes        = await fetchAsset(`./sprites/${CREDITS_TEXT_HASH}`);
   const imagePlaceholderBytes   = await fetchAsset(`./sprites/${IMAGE_PLACEHOLDER_HASH}`);
+  const imageIconBytes          = await fetchAsset(`./sprites/${IMAGE_ICON_HASH}`);
   // Gather every user-uploaded image referenced in the document and pull
   // its bytes out of IndexedDB. We do this BEFORE exporting the BSON so a
   // missing image fails the export cleanly rather than producing a broken
@@ -286,6 +289,7 @@ export async function exportBundleZip(
   manifest.push({ hash: PILL_SPRITE_HASH, bytes: PILL_SPRITE_BYTES });
   manifest.push({ hash: CREDITS_TEXT_HASH, bytes: CREDITS_TEXT_BYTES });
   manifest.push({ hash: IMAGE_PLACEHOLDER_HASH, bytes: IMAGE_PLACEHOLDER_BYTES });
+  manifest.push({ hash: IMAGE_ICON_HASH, bytes: IMAGE_ICON_BYTES });
   if (creditsBackdrop) manifest.push({ hash: creditsBackdrop.hash, bytes: creditsBackdrop.bytes.byteLength });
   for (const a of customAssets) {
     manifest.push({ hash: a.hash, bytes: a.bytes.byteLength });
@@ -308,6 +312,7 @@ export async function exportBundleZip(
   zip.file(`Assets/${PILL_SPRITE_HASH}`, pillSpriteBytes);
   zip.file(`Assets/${CREDITS_TEXT_HASH}`, creditsTextBytes);
   zip.file(`Assets/${IMAGE_PLACEHOLDER_HASH}`, imagePlaceholderBytes);
+  zip.file(`Assets/${IMAGE_ICON_HASH}`, imageIconBytes);
   if (creditsBackdrop) zip.file(`Assets/${creditsBackdrop.hash}`, creditsBackdrop.bytes);
   for (const a of customAssets) {
     zip.file(`Assets/${a.hash}`, a.bytes);

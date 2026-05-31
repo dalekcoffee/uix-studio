@@ -18,6 +18,7 @@
 
 import type { Slot, UixComponentType } from "../../model/types";
 import { isStructuralSlot } from "../../model/structural";
+import { findSlot, findParent } from "../../model/operations";
 import { getLayoutKind } from "./layoutEngine";
 import { computeAbsoluteRect } from "./slotRect";
 import type { Rect } from "./rectTransform";
@@ -68,6 +69,22 @@ export interface SnapContainer {
 
 export function isNestedContainer(slot: Slot): boolean {
   return slot.components.some((c) => NESTED_CONTAINER_TYPES.includes(c.type));
+}
+
+// Where a freshly added (or duplicated) element should be parented. A new
+// element drops at the bottom of the PAGE (Canvas root), never nested inside the
+// element the user happened to right-click — UNLESS the click resolves to a
+// nested container (ScrollArea / Column / popup card), in which case it lands at
+// the bottom of THAT container. Walks self-then-ancestors for the nearest nested
+// container; falls back to the root.
+export function resolveAddContainerId(root: Slot, slotId: string | null): string {
+  if (!slotId || slotId === root.id) return root.id;
+  let cur: Slot | null = findSlot(root, slotId);
+  while (cur && cur.id !== root.id) {
+    if (isNestedContainer(cur)) return cur.id;
+    cur = findParent(root, cur.id);
+  }
+  return root.id;
 }
 
 function strategyOf(slot: Slot, isRoot: boolean): ContainerStrategy {
