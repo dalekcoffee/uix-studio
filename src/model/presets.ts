@@ -16,9 +16,10 @@ export interface PresetDescriptor {
    * "id-card" = VTuber / student / authenticity-style identification cards
    * "tool"    = focused utility surfaces (keypad, calculator, …)
    * "dialog"  = modal-style overlays
+   * "marketing" = show-off / promotional pieces built with the editor itself
    * "blank"   = minimal canvas, build from scratch
    */
-  category: "panel" | "form" | "id-card" | "tool" | "dialog" | "blank";
+  category: "panel" | "form" | "id-card" | "tool" | "dialog" | "marketing" | "blank";
   /**
    * Free-form presets use absolute 2D positioning (centered cards, split
    * landscapes, ID-card grids, the keypad) that a VerticalLayout stack would
@@ -2175,6 +2176,346 @@ function buildRatingForm(): Slot {
 
 // ── Registry ──────────────────────────────────────────────────────────────────
 
+// ── Marketing: "UIX Studio Showcase" ─────────────────────────────────────────
+// A science-fair-poster style advertisement for UIX Studio, built with the
+// editor itself. Tri-fold layout: a header banner naming UIX Studio + a short
+// description, then three columns — the logo lockup ("UIX Studio") dead-center
+// with NOTHING above or below it, flanked by two feature "boards" listing
+// supported elements with a live example of each beneath the name. Freeform
+// (absolute) so the poster grid survives export. Examples are REAL controls so
+// the piece doubles as a working demo when shown off in-game.
+function buildShowcasePanel(): Slot {
+  const W = 1100;
+  const H = 770;
+
+  const BRAND    = rgb(0.24, 0.49, 0.78);
+  const BRAND_HI = rgb(0.32, 0.60, 0.90);
+  const BRAND_LO = rgb(0.16, 0.36, 0.60);
+  const WHITE    = rgb(0.95, 0.95, 0.96);
+  const MUTED    = rgb(0.62, 0.66, 0.72);
+  const DARK_CTRL = rgb(0.12, 0.13, 0.15);
+
+  const rt = (l: number, t: number, r: number, b: number) => rectRT(W, H, l, t, r, b);
+
+  const background = buildBackgroundTrio(rgb(0.05, 0.055, 0.065));
+
+  // ── Header banner ───────────────────────────────────────────────────────────
+  // Inset from the side edges so the centered title's rect doesn't span under
+  // the top-right Close button (keeps it centered; clears the corner-overlap note).
+  const headerTitle = slot("Header", [
+    rt(72, 28, W - 72, 84),
+    c("Text", { content: "UIX Studio", size: 42, color: WHITE, horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false }),
+  ]);
+  // Brand underline accent beneath the title. Named "Accent Bar" so the theme's
+  // accent color drives it (instead of staying hardcoded brand-blue).
+  const underline = slot("Accent Bar", [
+    rt((W - 220) / 2, 90, (W + 220) / 2, 94),
+    c("Image", { tint: BRAND, preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+  ]);
+  underline.structural = true;
+  const description = slot("Description", [
+    rt(150, 102, W - 150, 150),
+    c("Text", {
+      content:
+        "Design real Resonite panels right in your browser, then drop them straight into the game. Here's a taste of what you can build:",
+      size: 15, color: MUTED, horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false,
+    }),
+  ]);
+
+  const closeBtn = makeCloseBtn(rt(W - 58, 22, W - 22, 58));
+
+  // ── Center column: logo + "UIX Studio" wordmark (nothing above/below) ─────────
+  // themeLock pins the white tint so the brand mark stays crisp — without it the
+  // "Logo"-named accent pass would multiply the sprite by the theme accent and
+  // recolor the logo's light pixels.
+  const logo = slot("Logo", [
+    rt(455, 330, 645, 520),
+    c("Image", { tint: rgb(1, 1, 1), preserveAspect: true, spriteUrl: "", useLogoSprite: true, themeLock: true }),
+  ]);
+  const wordmark = slot("Wordmark", [
+    rt(380, 528, 720, 582),
+    c("Text", { content: "UIX Studio", size: 32, color: BRAND, horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false }),
+  ]);
+
+  // ── Example control builders (real, positioned by a RectTransform) ────────────
+  function exButton(rtc: UixComponent): Slot {
+    return slot("Button A", [
+      rtc,
+      c("Image", { tint: BRAND, preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+      c("Button", { normalColor: BRAND, highlightColor: BRAND_HI, pressColor: BRAND_LO, disabledColor: rgb(0.5, 0.5, 0.5), hoverVibrate: false }),
+    ], [
+      slot("Label", [
+        fillRT(),
+        c("Text", { content: "Press me", size: 14, color: WHITE, horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false }),
+      ]),
+    ]);
+  }
+  function exSlider(rtc: UixComponent): Slot {
+    return slot("Slider", [
+      rtc,
+      c("Image", { tint: DARK_CTRL, preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+      c("Slider", { value: 0.6, min: 0, max: 1, direction: "Horizontal", integers: false, power: 1, fillColor: BRAND, clamp: true, requireInitialPress: true }),
+    ]);
+  }
+  function exTextField(rtc: UixComponent): Slot {
+    return slot("Text Field", [
+      rtc,
+      c("Image", { tint: DARK_CTRL, preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+      c("TextField", {
+        placeholder: "", textContent: "Hello!", textAlign: "Center", fontSize: 16,
+        textColor: WHITE, placeholderColor: rgb(0.45, 0.45, 0.45), backgroundTint: DARK_CTRL,
+      }),
+    ]);
+  }
+  function exToggle(rtc: UixComponent): Slot {
+    const knob = slot("Knob", [
+      c("RectTransform", {
+        anchorMin: { x: 0.5, y: 0.5 }, anchorMax: { x: 0.5, y: 0.5 },
+        offsetMin: { x: 1, y: -13 }, offsetMax: { x: 27, y: 13 }, pivot: { x: 0.5, y: 0.5 },
+      }),
+      c("Image", { tint: rgb(0.95, 0.95, 0.95), preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+      c("Knob", {
+        offOffsetMin: { x: -27, y: -13 }, offOffsetMax: { x: -1, y: 13 },
+        onOffsetMin: { x: 1, y: -13 }, onOffsetMax: { x: 27, y: 13 },
+      }),
+    ]);
+    return slot("Toggle", [
+      rtc,
+      c("Image", { tint: DARK_CTRL, preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+      c("Button", { normalColor: rgb(0.9, 0.9, 0.9), highlightColor: rgb(0.9, 0.9, 0.9), pressColor: rgb(0.9, 0.9, 0.9), disabledColor: rgb(0.5, 0.5, 0.5), hoverVibrate: false }),
+      c("Toggle", { initialState: true, offColor: DARK_CTRL, onColor: BRAND }),
+    ], [knob]);
+  }
+  function exCheckbox(rtc: UixComponent): Slot {
+    const checkIcon = slot("Check Icon", [
+      fillRT(),
+      c("Image", { tint: rgb(0.9, 0.9, 0.9), preserveAspect: true, spriteUrl: "", useCheckIcon: true }),
+      c("Button", { normalColor: rgb(0.9, 0.9, 0.9), highlightColor: rgb(0.9, 0.9, 0.9), pressColor: rgb(0.9, 0.9, 0.9), disabledColor: rgb(0.5, 0.5, 0.5), hoverVibrate: false }),
+      c("Checkbox", { initialState: true }),
+    ]);
+    return slot("Box", [
+      rtc,
+      c("Image", { tint: DARK_CTRL, preserveAspect: false, spriteUrl: "", cornerRadius: 8 }),
+    ], [checkIcon]);
+  }
+  function exColor(rtc: UixComponent): Slot {
+    return slot("Color Picker", [
+      rtc,
+      c("Image", { tint: BRAND, preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+      c("Button", { normalColor: BRAND, highlightColor: BRAND, pressColor: BRAND, disabledColor: BRAND, hoverVibrate: false }),
+      c("ColorPicker", { initialColor: BRAND, alpha: true, hdr: false }),
+    ]);
+  }
+  function exDropdown(rtc: UixComponent): Slot {
+    return slot("Dropdown", [
+      rtc,
+      c("Image", { tint: rgb(0.14, 0.16, 0.20), preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+      c("Button", { normalColor: rgb(0.14, 0.16, 0.20), highlightColor: rgb(0.22, 0.26, 0.32), pressColor: rgb(0.10, 0.12, 0.16), disabledColor: rgb(0.3, 0.3, 0.3), hoverVibrate: false }),
+      c("Dropdown", { options: "Low\nMedium\nHigh", initialIndex: 1, optionFillColor: rgb(0.14, 0.16, 0.20), optionLabelColor: WHITE }),
+    ]);
+  }
+  function exProgress(rtc: UixComponent): Slot {
+    return slot("Progress Bar", [
+      rtc,
+      c("Image", { tint: DARK_CTRL, preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+      c("ProgressBar", { value: 0.45, min: 0, max: 1, direction: "Horizontal", fillColor: BRAND }),
+    ]);
+  }
+  function exSpinner(rtc: UixComponent): Slot {
+    // A single square slot carrying the spinner flag — the exporter's hasSpinner
+    // branch swaps the Image for an animated OutlinedArc and appends a bool value.
+    return slot("Loading Spinner", [
+      rtc,
+      c("Image", { tint: rgb(0.27, 0.57, 0.84), preserveAspect: true, spriteUrl: "", useSpinnerIcon: true }),
+    ]);
+  }
+  function exPopup(rtc: UixComponent): Slot {
+    // A button carrying a Popup marker — the exporter lowers it into a spawn-
+    // window modal (a hidden full-canvas dialog toggled Active on click). Mirrors
+    // the makeHelpBtn pattern: Image+Button+Popup on the slot, caption in a child.
+    return slot("Open Dialog", [
+      rtc,
+      c("Image", { tint: BRAND, preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+      c("Button", { normalColor: BRAND, highlightColor: BRAND_HI, pressColor: BRAND_LO, disabledColor: rgb(0.5, 0.5, 0.5), hoverVibrate: false }),
+      c("Popup", {
+        title: "It's a pop-up!",
+        body: "Any button can spawn a dialog window like this one — great for confirmations, info, or warnings. Edit the Popup component on this button to change what it says.",
+        dismissLabel: "Neat!",
+      }),
+    ], [
+      slot("Label", [
+        fillRT(),
+        c("Text", { content: "Open ▸", size: 14, color: WHITE, horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false }),
+      ]),
+    ]);
+  }
+
+  // ── Right-side scroll list ────────────────────────────────────────────────────
+  // A right-anchored, vertically-centered control rect for one scroll row.
+  function rightRT(w: number, h: number): UixComponent {
+    return c("RectTransform", {
+      anchorMin: { x: 1, y: 0.5 }, anchorMax: { x: 1, y: 0.5 },
+      offsetMin: { x: -(w + 14), y: -h / 2 }, offsetMax: { x: -14, y: h / 2 },
+      pivot: { x: 0.5, y: 0.5 },
+    });
+  }
+  // One scroll row: a rounded card with the element name on the left and a live
+  // control on the right. LayoutElement makes the ScrollArea's VerticalLayout
+  // stack + order it; `ctlW` reserves room so the label never overlaps the control.
+  const ROW_H = 52;
+  function scrollRow(name: string, label: string, ctlW: number, control: Slot, idx: number): Slot {
+    const lbl = slot("Label", [
+      c("RectTransform", {
+        anchorMin: { x: 0, y: 0 }, anchorMax: { x: 1, y: 1 },
+        offsetMin: { x: 14, y: 0 }, offsetMax: { x: -(ctlW + 24), y: 0 },
+        pivot: { x: 0.5, y: 0.5 },
+      }),
+      c("Text", { content: label, size: 15, color: WHITE, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+    ]);
+    return slot(name, [
+      fillRT(),
+      c("LayoutElement", {
+        minWidth: -1, preferredWidth: -1, flexibleWidth: -1,
+        minHeight: ROW_H, preferredHeight: ROW_H, flexibleHeight: -1,
+        orderOffset: idx,
+      }),
+      c("Image", { tint: rgb(0.12, 0.135, 0.16), preserveAspect: false, spriteUrl: "", cornerRadius: 10 }),
+    ], [lbl, control]);
+  }
+
+  // ── Feature board scaffold ────────────────────────────────────────────────────
+  // A board is a rounded backdrop panel with a small uppercase kicker and three
+  // feature blocks (name + one-line blurb + a live example beneath).
+  interface Feature {
+    name: string;
+    blurb: string;
+    example: (colLeft: number, zoneTop: number) => Slot[];
+  }
+
+  function board(name: string, kicker: string, colL: number, colR: number, features: Feature[]): Slot[] {
+    const boardBg = slot(name, [
+      rt(colL - 24, 168, colR + 24, 740),
+      c("Image", { tint: rgb(0.085, 0.092, 0.108), preserveAspect: false, spriteUrl: "", cornerRadius: 14 }),
+    ]);
+    boardBg.structural = true;
+
+    const kickerSlot = slot(`${name} Kicker`, [
+      rt(colL, 184, colR, 206),
+      c("Text", { content: kicker, size: 12, color: BRAND, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+    ]);
+
+    const blocks: Slot[] = [];
+    features.forEach((f, i) => {
+      const blockTop = 222 + i * 168;
+      blocks.push(slot(`${f.name} Name`, [
+        rt(colL, blockTop, colR, blockTop + 28),
+        c("Text", { content: f.name, size: 19, color: WHITE, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+      ]));
+      blocks.push(slot(`${f.name} Blurb`, [
+        rt(colL, blockTop + 30, colR, blockTop + 52),
+        c("Text", { content: f.blurb, size: 12, color: MUTED, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+      ]));
+      blocks.push(...f.example(colL, blockTop + 60));
+    });
+
+    return [boardBg, kickerSlot, ...blocks];
+  }
+
+  // Left board "INTERACT": Buttons, Sliders, Text Fields.
+  const leftL = 64;
+  const leftR = 336;
+  const leftBoard = board("Left Board", "INTERACT", leftL, leftR, [
+    {
+      name: "Buttons", blurb: "Trigger anything with a tap.",
+      example: (l, z) => [exButton(rt(l, z + 2, l + 150, z + 42))],
+    },
+    {
+      name: "Sliders", blurb: "Dial in a value smoothly.",
+      example: (l, z) => [exSlider(rt(l, z + 14, l + 200, z + 30))],
+    },
+    {
+      name: "Text Fields", blurb: "Let people type in-world.",
+      example: (l, z) => [exTextField(rt(l, z + 6, l + 210, z + 38))],
+    },
+  ]);
+
+  // Right board "MORE CONTROLS" — a real ScrollArea so the list itself shows off
+  // scrolling. Holds more elements than fit (Toggle, Checkbox, Color Picker,
+  // Dropdown, Slider, Progress Bar, Text Field, Spinner, Popup) so a scrollbar is
+  // always needed. Each row is a labeled card with a working control on the right.
+  const rightL = 764;
+  const rightR = 1036;
+  const rightBoardBg = slot("Right Board", [
+    rt(rightL - 24, 168, rightR + 24, 740),
+    c("Image", { tint: rgb(0.085, 0.092, 0.108), preserveAspect: false, spriteUrl: "", cornerRadius: 14 }),
+  ]);
+  rightBoardBg.structural = true;
+  const rightKicker = slot("Right Board Kicker", [
+    rt(rightL, 184, rightR, 206),
+    c("Text", { content: "MORE CONTROLS", size: 12, color: BRAND, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+  ]);
+  const scrollHint = slot("Scroll Hint", [
+    rt(rightL, 207, rightR, 226),
+    c("Text", { content: "Scroll for more  ↓", size: 11, color: MUTED, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+  ]);
+
+  // Row table: name, control width (to reserve label room), height, builder.
+  const scrollRows: Slot[] = [
+    { n: "Toggle",       w: 60,  h: 32, b: exToggle },
+    { n: "Checkbox",     w: 30,  h: 30, b: exCheckbox },
+    { n: "Color Picker", w: 90,  h: 28, b: exColor },
+    { n: "Dropdown",     w: 150, h: 32, b: exDropdown },
+    { n: "Slider",       w: 150, h: 14, b: exSlider },
+    { n: "Progress Bar", w: 150, h: 12, b: exProgress },
+    { n: "Text Field",   w: 170, h: 32, b: exTextField },
+    { n: "Spinner",      w: 30,  h: 30, b: exSpinner },
+    { n: "Popup Dialog", w: 110, h: 34, b: exPopup },
+  ].map((f, i) => scrollRow(`${f.n} Row`, f.n, f.w, f.b(rightRT(f.w, f.h)), i));
+
+  const scrollViewport = slot("Scroll Viewport", [
+    fillRT(),
+    c("ScrollArea", {
+      direction: "Vertical",
+      backgroundTint: rgb(0.07, 0.08, 0.10, 1),
+      spacing: 10, padding: 12,
+      showScrollbar: true,
+      scrollbarTrackTint: rgb(0.15, 0.17, 0.21, 1),
+      scrollbarThumbTint: rgb(0.55, 0.60, 0.68, 1),
+    }),
+  ], scrollRows);
+  // Viewport rect inside the board, below the kicker/hint. Content (~9×62px) is
+  // taller than this ~485px window, so the scrollbar is always live.
+  const scrollSection = slot("Scrollable Controls", [
+    rt(rightL - 8, 234, rightR + 8, 720),
+  ], [scrollViewport]);
+
+  return slot(
+    "Canvas",
+    [
+      c("Canvas", {
+        sizeX: W, sizeY: H, pixelScale: 0.0005,
+        acceptPhysicalTouch: true,
+        backgroundColor: rgb(0.05, 0.055, 0.065), rounded: true,
+      }),
+      fillRT(),
+    ],
+    [
+      background,
+      ...leftBoard,
+      rightBoardBg,
+      rightKicker,
+      scrollHint,
+      scrollSection,
+      logo,
+      wordmark,
+      headerTitle,
+      underline,
+      description,
+      closeBtn,
+    ],
+  );
+}
+
 export const BUILTIN_PRESETS: readonly PresetDescriptor[] = [
   {
     id: "experimental",
@@ -2294,6 +2635,15 @@ export const BUILTIN_PRESETS: readonly PresetDescriptor[] = [
     category: "id-card",
     freeform: true,
     build: buildProfileCard,
+  },
+  {
+    id: "showcase",
+    name: "UIX Studio Showcase",
+    description:
+      "A science-fair-poster advertisement for UIX Studio, built with the editor itself: a header banner + short description and the logo lockup dead-center. The left board lists input controls (Buttons, Sliders, Text Fields) with a live example of each; the right board is a real scrollable list of more controls (Toggle, Checkbox, Color Picker, Dropdown, Slider, Progress Bar, Text Field, Spinner, and a Popup-dialog button) so it shows off scrolling, the loading spinner, and pop-out dialogs too. A ready-to-show-off promo piece.",
+    category: "marketing",
+    freeform: true,
+    build: buildShowcasePanel,
   },
   {
     id: "blank",

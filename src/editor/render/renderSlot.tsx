@@ -192,6 +192,7 @@ export function RenderedSlot({ slot, rect, isRoot }: Props) {
     imgProps.useCloseIcon     ? "/UIIcons/Cancel.png" :
     imgProps.useCheckIcon     ? "/UIIcons/Checkmark.png" :
     imgProps.useBackspaceIcon ? "/UIIcons/Backspace.png" :
+    imgProps.useLogoSprite    ? "/UIX%20Studio.png" :
     null;
   const resolvedSpriteUrl = isBackFacing
     ? null

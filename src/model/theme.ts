@@ -481,7 +481,12 @@ export function applyControlSurface(root: Slot, color: Color): Slot {
     // that isImagePlaceholderSlot excludes because it's a shape or has a sprite).
     const PICTURE_BAND_NAMES = new Set(["avatar", "banner", "image panel"]);
     const isPictureBand = PICTURE_BAND_NAMES.has(s.name.trim().toLowerCase());
-    if (!isField && !isCheckboxBox && !isHeader && !isPlaceholder && !isPill && !isDisplay && !isPictureBand) return;
+    // "Board" panels — the framed sub-surfaces of a poster/showcase layout (e.g.
+    // the Showcase preset's "Left Board" / "Right Board"). They're a raised panel
+    // tier, the same role as the header bar, so they ride controlSurface and
+    // re-skin instead of staying a hardcoded dark fill on a light theme.
+    const isBoard = s.name.trim().toLowerCase().endsWith(" board");
+    if (!isField && !isCheckboxBox && !isHeader && !isPlaceholder && !isPill && !isDisplay && !isPictureBand && !isBoard) return;
     // `themeLock` pins the white login-input fields — leave their surface alone.
     if (isLocked(s.components.find((c) => c.type === "Image"))) return;
     setComponentProp(s, "Image", "tint", color);
@@ -542,7 +547,25 @@ export function applyButtonA(root: Slot, color: Color): Slot {
   // "Login Button" is the form presets' primary call-to-action and "Install" is
   // the installer's — same role as the experimental panel's "Button A"/"Enter",
   // so they ride the primary button color rather than staying hardcoded.
-  return applyButtonColors(root, ["Button A", "Enter", "Login Button", "Install"], color);
+  // "Open Dialog" is the Showcase preset's popup trigger — a primary action too.
+  const r = applyButtonColors(root, ["Button A", "Enter", "Login Button", "Install", "Open Dialog"], color);
+  // A Color Picker's swatch defaults to the primary button color (see
+  // widgets.buildColorPicker). Tie its initial color + swatch Image/Button to
+  // buttonA so a freshly-defaulted picker re-skins with the theme instead of
+  // staying a hardcoded brand color; a user-set `themeLock` pins it.
+  const highlight = lighten(color, 0.12);
+  const press = lighten(color, -0.12);
+  walk(r, (s) => s.components.some((c) => c.type === "ColorPicker"), (s) => {
+    const cp = s.components.find((c) => c.type === "ColorPicker");
+    if (isLocked(cp) || isLocked(s.components.find((c) => c.type === "Image"))) return;
+    setComponentProp(s, "ColorPicker", "initialColor", color);
+    setComponentProp(s, "Image", "tint", color);
+    setComponentProp(s, "Button", "normalColor", color);
+    setComponentProp(s, "Button", "highlightColor", highlight);
+    setComponentProp(s, "Button", "pressColor", press);
+    setComponentProp(s, "Button", "disabledColor", color);
+  });
+  return r;
 }
 
 // Button B drives two things, by STRUCTURE rather than slot name (so a renamed

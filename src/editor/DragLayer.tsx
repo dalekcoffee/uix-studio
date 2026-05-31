@@ -587,8 +587,10 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
   // External purple scrollbars: one per scrollable nested container, in the
   // right gutter just outside the field. Editor-only — the in-game scrollbar is
   // built at export time and previewed (statically) inside the box separately.
+  // NOT gated to snap mode: a scroll field needs a working scroll control in
+  // BOTH modes (the snap GRIPS stay snap-only, but the scrollbar is a content
+  // control, not a layout grabber — you still need to scroll a field in Free).
   const scrollbars = useMemo(() => {
-    if (editMode !== "snap") return [];
     const out: {
       id: string;
       left: number;
@@ -837,11 +839,13 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
   }, [beginDrag]);
 
   // Track each scrollable container's scroll offset so child grips ride along
-  // with the items (and only show for items currently in view). Re-attach when
-  // the tree changes (scroll DOM nodes may be added/removed). scrollTop is in
-  // canvas units (the canvas is CSS-transform scaled, which doesn't affect it).
+  // with the items (and only show for items currently in view), AND so the
+  // external scrollbar can size/position its thumb. Runs in BOTH modes — the
+  // scrollbar (and a selected element's scroll-follow) needs live metrics in
+  // Free too, not just Snap. Re-attach when the tree changes (scroll DOM nodes
+  // may be added/removed). scrollTop is in canvas units (the canvas is
+  // CSS-transform scaled, which doesn't affect it).
   useEffect(() => {
-    if (editMode !== "snap") return;
     const els = Array.from(
       document.querySelectorAll<HTMLElement>("[data-scroll-container]"),
     );

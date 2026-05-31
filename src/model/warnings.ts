@@ -183,6 +183,15 @@ function isNonVisualGroup(slot: Slot): boolean {
   return !slot.components.some((c) => c.type === "Image" || c.type === "Text");
 }
 
+// The popup content card (carries a PopupContent component) is an INACTIVE modal
+// overlay: it's centered over the panel but only becomes visible when its trigger
+// is clicked in-game (Active=false at rest). Flagging siblings for "overlapping"
+// it is noise — it isn't drawn until shown, and it's MEANT to cover the panel
+// then. Skip overlap pairs that involve one; its own children are still checked.
+function isPopupOverlaySlot(slot: Slot): boolean {
+  return slot.components.some((c) => c.type === "PopupContent");
+}
+
 // True when `outer` fully encloses `inner` (within a small slack). When a slot
 // sits entirely inside an earlier sibling, it's content layered ON a backdrop
 // (avatar on a card, label on a panel, icon on a header stripe) — intentional,
@@ -202,8 +211,15 @@ function collectOverlapWarnings(
   parentAbsRect: Rect,
   canvasRect: Rect,
   out: DocWarning[],
+  // True when an ancestor is a ScrollArea viewport. Content inside a scroll
+  // area is MEANT to overflow its viewport (that's what scrolling is for) — the
+  // viewport clips/scrolls it, so it never actually spills off the canvas. Skip
+  // the off-canvas check for everything under a ScrollArea.
+  insideScroll = false,
 ) {
   const layoutKind = getLayoutKind(parent);
+  const parentIsScroll = parent.components.some((c) => c.type === "ScrollArea");
+  const scrollScope = insideScroll || parentIsScroll;
   const containerRect: Rect = { x: 0, y: 0, w: parentAbsRect.w, h: parentAbsRect.h };
   const childRects = layoutKind
     ? layoutChildren(containerRect, parent, layoutKind)
@@ -212,8 +228,9 @@ function collectOverlapWarnings(
   // Off-canvas / clipping check — flag any child whose canvas-space rect
   // extends meaningfully past the canvas edges. Background slots are
   // intentionally full-canvas; skip them and their descendants for this check
-  // (handled by the early-return below for the overlap pass too).
-  if (!isBackgroundSlot(parent) && childRects) {
+  // (handled by the early-return below for the overlap pass too). ScrollArea
+  // descendants are skipped too — overflow is expected there.
+  if (!isBackgroundSlot(parent) && !scrollScope && childRects) {
     for (let i = 0; i < parent.children.length; i++) {
       const child = parent.children[i];
       if (isBackgroundSlot(child)) continue;
@@ -255,7 +272,7 @@ function collectOverlapWarnings(
           w: childRects[i].w,
           h: childRects[i].h,
         };
-        collectOverlapWarnings(parent.children[i], childAbs, canvasRect, out);
+        collectOverlapWarnings(parent.children[i], childAbs, canvasRect, out, scrollScope);
       }
     }
     return;
@@ -276,6 +293,9 @@ function collectOverlapWarnings(
         // Skip pairs where one side is a non-visual grouping container (e.g.
         // "Radials") — its rect overlapping a sibling isn't a visual conflict.
         if (isNonVisualGroup(ca) || isNonVisualGroup(cb)) continue;
+        // Skip pairs involving the inactive popup modal card — it's hidden until
+        // triggered and is meant to cover the panel when shown.
+        if (isPopupOverlaySlot(ca) || isPopupOverlaySlot(cb)) continue;
         const a = childRects[i];
         const b = childRects[j];
         // Skip content layered on a backdrop: when the EARLIER sibling (drawn
@@ -315,11 +335,11 @@ function collectOverlapWarnings(
         w: local.w,
         h: local.h,
       };
-      collectOverlapWarnings(parent.children[i], childAbs, canvasRect, out);
+      collectOverlapWarnings(parent.children[i], childAbs, canvasRect, out, scrollScope);
     }
   } else {
     for (const c of parent.children) {
-      collectOverlapWarnings(c, parentAbsRect, canvasRect, out);
+      collectOverlapWarnings(c, parentAbsRect, canvasRect, out, scrollScope);
     }
   }
 }

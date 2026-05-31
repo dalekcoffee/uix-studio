@@ -10,6 +10,7 @@ const CATEGORY_ORDER: PresetDescriptor["category"][] = [
   "id-card",
   "tool",
   "dialog",
+  "marketing",
   "blank",
 ];
 
@@ -19,6 +20,7 @@ const CATEGORY_LABELS: Record<PresetDescriptor["category"], string> = {
   "id-card": "ID Cards",
   tool:      "Tools",
   dialog:    "Dialogs",
+  marketing: "Marketing",
   blank:     "Start fresh",
 };
 

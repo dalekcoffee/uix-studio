@@ -78,6 +78,16 @@ export default function PopupEditSurface({ card, shift, scale, canvasSize }: Pro
             transform: `scale(${scale})`,
             transformOrigin: "top left",
           }}
+          // This scaled canvas-space fills the lifted wrapper, so it — not the
+          // wrapper — is what a click in the dead space around the card actually
+          // hits. Close when the bare surface is clicked (clicking the card
+          // itself targets a card element, so it's left open for editing).
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              e.stopPropagation();
+              close();
+            }
+          }}
         >
           {/* Accent ring + drop shadow framing the card as its own surface. */}
           <div
