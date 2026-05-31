@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { useStore } from "../../state/store";
+import { useDialog } from "../useDialog";
 import {
   addImageFile,
   addImageFromUrl,
@@ -48,6 +49,7 @@ export function CustomImagePicker({
 }) {
   const setProp = useStore((s) => s.setProp);
   const setProps = useStore((s) => s.setProps);
+  const dialog = useDialog();
   const fileRef = useRef<HTMLInputElement>(null);
   const [images, setImages] = useState<StoredImage[]>([]);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -98,7 +100,7 @@ export function CustomImagePicker({
         if (componentType === "Image") setProp(slotId, componentType as UixComponentType, "preserveAspect", true);
       }
     } catch (err) {
-      alert(`Upload failed: ${(err as Error).message}`);
+      await dialog.alert(`Upload failed: ${(err as Error).message}`);
     } finally {
       setBusy(false);
     }
@@ -137,7 +139,7 @@ export function CustomImagePicker({
       const stored = await addImageFromUrl(iconUrl, iconName);
       pick(stored.hash);
     } catch (err) {
-      alert(`Couldn't load icon: ${(err as Error).message}`);
+      await dialog.alert(`Couldn't load icon: ${(err as Error).message}`);
     } finally {
       setBusy(false);
     }
@@ -240,7 +242,7 @@ export function CustomImagePicker({
           currentHash={currentHash}
           onPick={pick}
           onDelete={async (h) => {
-            if (!confirm("Delete this image from the library? Any slot using it will lose its reference.")) return;
+            if (!await dialog.confirm("Delete this image from the library? Any slot using it will lose its reference.", { destructive: true, confirmLabel: "Delete" })) return;
             await deleteImage(h);
           }}
         />

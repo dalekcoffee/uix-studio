@@ -4,6 +4,7 @@ import { findBackgroundSlots } from "../model/background";
 import type { Slot } from "../model/types";
 import { CustomImagePicker } from "./inspector/ImagePicker";
 import { useCustomImageUrl } from "./useCustomImageUrl";
+import { useDialog } from "./useDialog";
 
 // Background menu — owns the panel's backdrop. Sets a Single background (both
 // faces) or Per-side (front vs back), each either a solid color or an image
@@ -100,6 +101,7 @@ function ModeBtn({ active, onClick, label, hint }: { active: boolean; onClick: (
 function FaceEditor({ target, label, props }: { target: Target; label: string; props: Record<string, unknown> }) {
   const setBackground = useStore((s) => s.setBackground);
   const setBackgroundFit = useStore((s) => s.setBackgroundFit);
+  const dialog = useDialog();
   const kind = faceKind(props);
   // The active tab follows the face's actual kind (so applying an image reveals
   // the Image tab + framing immediately) unless the user explicitly switched.
@@ -109,10 +111,10 @@ function FaceEditor({ target, label, props }: { target: Target; label: string; p
   const currentHash = (props.customImageHash as string) || "";
   const fit = ((props.backgroundFit as string) ?? "full") as "fit" | "stretch" | "full";
 
-  const applyImage = (hash: string) => {
+  const applyImage = async (hash: string) => {
     const res = setBackground(target, { kind: "image", hash });
     if (!res.ok && res.reason === "mismatch") {
-      if (confirm("The front and back currently use different background images. Replace both with this image?")) {
+      if (await dialog.confirm("The front and back currently use different background images. Replace both with this image?", { confirmLabel: "Replace Both" })) {
         setBackground(target, { kind: "image", hash }, { force: true });
       }
     }

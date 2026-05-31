@@ -3,6 +3,7 @@ import Splash from "./editor/Splash";
 import Editor from "./editor/Editor";
 import { useStore } from "./state/store";
 import { readAutosave, writeAutosave, clearAutosave } from "./io/autosave";
+import { DialogProvider } from "./editor/useDialog";
 import type { UixDocument } from "./model/types";
 
 // Debounce window for autosave writes — long enough that a flurry of edits
@@ -68,6 +69,7 @@ export default function App() {
       {showSplash ? (
         <Splash onDismiss={() => setShowSplash(false)} />
       ) : (
+        <DialogProvider>
         <div className="relative h-full w-full">
           <Editor />
           {restorable && (
@@ -84,6 +86,7 @@ export default function App() {
             />
           )}
         </div>
+        </DialogProvider>
       )}
     </div>
   );

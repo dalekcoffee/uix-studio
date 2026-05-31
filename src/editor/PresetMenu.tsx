@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "../state/store";
 import { BUILTIN_PRESETS, type PresetDescriptor } from "../model/presets";
+import { useDialog } from "./useDialog";
 
 // Category labels keyed by the literal category string on PresetDescriptor.
 // Ordered: this controls the section order in the menu.
@@ -34,6 +35,7 @@ export default function PresetMenu() {
   );
   const ref = useRef<HTMLDivElement>(null);
   const loadPreset = useStore((s) => s.loadPreset);
+  const dialog = useDialog();
 
   useEffect(() => {
     if (!open) return;
@@ -57,10 +59,11 @@ export default function PresetMenu() {
     if (open) setExpanded(new Set());
   }, [open]);
 
-  function pick(p: PresetDescriptor) {
+  async function pick(p: PresetDescriptor) {
     if (
-      !confirm(
+      !await dialog.confirm(
         `Replace the current canvas with the "${p.name}" preset? Any unsaved work will be lost.`,
+        { confirmLabel: "Load Preset" },
       )
     ) {
       return;

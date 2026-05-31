@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useStore } from "../state/store";
 import { addImageFile } from "../io/imageStore";
 import { useCustomImageUrl } from "./useCustomImageUrl";
+import { useDialog } from "./useDialog";
 
 // Branding menu — owns the panel's back-side identity:
 //   • Logo image (overrides the default UIX Studio logo on the rear of the panel)
@@ -18,6 +19,7 @@ export default function BrandingMenu({ onClose }: { onClose: () => void }) {
 
   // Resolve the custom logo hash to a blob URL for preview (re-resolves on
   // upload via the image-store subscription inside the hook).
+  const dialog = useDialog();
   const imageUrl = useCustomImageUrl(theme.backLogoImageHash);
   // Transient "Saved!" state for the Apply button. Clicking apply flips this
   // to true; a setTimeout reverts after ~1.4s so the button visibly confirms
@@ -38,7 +40,7 @@ export default function BrandingMenu({ onClose }: { onClose: () => void }) {
       const stored = await addImageFile(file);
       setTheme({ backLogoImageHash: stored.hash });
     } catch (err) {
-      alert(`Failed to upload image: ${(err as Error).message}`);
+      await dialog.alert(`Failed to upload image: ${(err as Error).message}`);
     }
   }
 

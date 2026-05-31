@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useStore } from "../state/store";
+import { useDialog } from "./useDialog";
 import type { Slot } from "../model/types";
 import { controlDisplayName } from "../model/controlName";
 import { isStructuralSlot } from "../model/structural";
@@ -125,6 +126,7 @@ function SlotNode({ slot, depth, dropTarget, setDropTarget, draggingRef, ancesto
   const renamingSlotId = useStore((s) => s.renamingSlotId);
   const clearRenaming = useStore((s) => s.clearRenaming);
   const root = useStore((s) => s.root);
+  const dialog = useDialog();
   const isRoot = depth === 0;
   const locked = !!slot.locked;
   // Visible children exclude hidden structural backdrop slots (see filter below).
@@ -320,9 +322,9 @@ function SlotNode({ slot, depth, dropTarget, setDropTarget, draggingRef, ancesto
             <button
               title="Delete"
               className="rounded px-1 text-slate-400 hover:text-rose-300"
-              onClick={(e) => {
+              onClick={async (e) => {
                 e.stopPropagation();
-                if (confirm(`Delete slot "${displayName}" and its children?`)) remove(slot.id);
+                if (await dialog.confirm(`Delete slot "${displayName}" and its children?`, { destructive: true, confirmLabel: "Delete" })) remove(slot.id);
               }}
             >
               ✕

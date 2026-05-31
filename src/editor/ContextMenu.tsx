@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useStore, type AlignAxis, type AlignMode } from "../state/store";
+import { useDialog } from "./useDialog";
 import { type UixComponentType } from "../model/types";
 import {
   PALETTE_GROUPS,
@@ -34,6 +35,7 @@ export default function ContextMenu() {
   const duplicate = useStore((s) => s.duplicate);
   const remove = useStore((s) => s.remove);
   const toggleSlotLock = useStore((s) => s.toggleSlotLock);
+  const dialog = useDialog();
   const beginRename = useStore((s) => s.beginRename);
 
   const menuRef = useRef<HTMLDivElement>(null);
@@ -159,8 +161,8 @@ export default function ContextMenu() {
               </ChipBtn>
               <ChipBtn
                 danger
-                onClick={() => {
-                  if (confirm(`Delete slot "${slot.name}" and its children?`)) {
+                onClick={async () => {
+                  if (await dialog.confirm(`Delete slot "${slot.name}" and its children?`, { destructive: true, confirmLabel: "Delete" })) {
                     remove(slot.id);
                   }
                   close();

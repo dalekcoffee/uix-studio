@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "../state/store";
+import { useDialog } from "./useDialog";
 import { APP_AUTHOR, APP_VERSION, APP_CHANNEL } from "../version";
 import { exportNativeFile, downloadBlob } from "../io/exportNative";
 import { importNativeFile } from "../io/importNative";
@@ -20,6 +21,7 @@ export default function Toolbar() {
   const redo = useStore((s) => s.redo);
   const canUndo = useStore((s) => s.history.length > 0);
   const canRedo = useStore((s) => s.future.length > 0);
+  const dialog = useDialog();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [exportDone, setExportDone] = useState(false);
@@ -42,7 +44,7 @@ export default function Toolbar() {
       setExportDone(true);
       await new Promise((resolve) => setTimeout(resolve, 2000));
     } catch (err) {
-      alert(`Export failed: ${(err as Error).message}`);
+      await dialog.alert(`Export failed: ${(err as Error).message}`);
     } finally {
       setIsExporting(false);
       setExportDone(false);
@@ -57,7 +59,7 @@ export default function Toolbar() {
       const doc = await importNativeFile(file);
       loadDocument(doc);
     } catch (err) {
-      alert(`Failed to import file: ${(err as Error).message}`);
+      await dialog.alert(`Failed to import file: ${(err as Error).message}`);
     }
   }
 
@@ -141,8 +143,8 @@ export default function Toolbar() {
           ↷ Redo
         </ToolbarButton>
         <ToolbarButton
-          onClick={() => {
-            if (confirm("Discard the current panel and start fresh?")) reset();
+          onClick={async () => {
+            if (await dialog.confirm("Discard the current panel and start fresh?", { confirmLabel: "Discard", destructive: true })) reset();
           }}
           title="Start a new panel"
         >

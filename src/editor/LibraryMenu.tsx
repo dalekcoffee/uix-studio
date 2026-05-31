@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "../state/store";
 import { useDismissable } from "./useDismissable";
+import { useDialog } from "./useDialog";
 import {
   addImageFile,
   deleteImage,
@@ -44,6 +45,7 @@ export default function LibraryMenu() {
     };
   }, []);
 
+  const dialog = useDialog();
   const close = useCallback(() => setOpen(false), []);
   useDismissable(open, close, ref);
 
@@ -63,23 +65,22 @@ export default function LibraryMenu() {
     try {
       await addImageFile(file);
     } catch (err) {
-      alert(`Upload failed: ${(err as Error).message}`);
+      await dialog.alert(`Upload failed: ${(err as Error).message}`);
     } finally {
       setBusy(false);
     }
   }
 
   async function deleteOne(hash: string) {
-    if (!confirm("Delete this image from the library? Any slot using it will lose its reference.")) return;
+    if (!await dialog.confirm("Delete this image from the library? Any slot using it will lose its reference.", { destructive: true, confirmLabel: "Delete" })) return;
     await deleteImage(hash);
   }
 
   async function deleteUnreferenced() {
     if (unreferenced.length === 0) return;
     const msg =
-      `Delete ${unreferenced.length} unreferenced image${unreferenced.length === 1 ? "" : "s"} (${formatBytes(unrefBytes)})?\n\n` +
-      `These aren't used by anything in the current document.`;
-    if (!confirm(msg)) return;
+      `Delete ${unreferenced.length} unreferenced image${unreferenced.length === 1 ? "" : "s"} (${formatBytes(unrefBytes)})?\n\nThese aren't used by anything in the current document.`;
+    if (!await dialog.confirm(msg, { destructive: true, confirmLabel: "Delete All" })) return;
     for (const img of unreferenced) await deleteImage(img.hash);
   }
 
