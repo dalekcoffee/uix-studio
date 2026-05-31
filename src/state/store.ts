@@ -669,7 +669,19 @@ export const useStore = create<State & Actions>((set, get) => {
     const h = placeRowAtTop(child, top);
     let next = addChildSlot(root, root.id, child);
     const needed = top + h + APPEND_MARGIN;
-    if (grow && needed > canvasSize.h) next = setCanvasSize(next, canvasSize.w, needed);
+    if (grow && needed > canvasSize.h) {
+      // Grow the canvas DOWNWARD to fit the new bottom row — but via
+      // resizeCanvasKeepingSizes, NOT raw setCanvasSize. A bare setCanvasSize only
+      // changes the canvas dimensions; any child anchored to the full canvas
+      // (anchorMin 0,0 / anchorMax 1,1 — exactly what every preset's `rectRT`
+      // helper emits) then STRETCHES with it, so a 40px pill balloons into a giant
+      // blob and the whole scene "explodes" on add. resizeCanvasKeepingSizes
+      // re-derives each child's offsets so it keeps its pixel size. "snap" =
+      // top-left pinning, which is what we always want for an append (the canvas
+      // only ever extends at the bottom, so existing content should stay put) —
+      // independent of the editor's actual Snap/Free mode.
+      next = resizeCanvasKeepingSizes(next, canvasSize, canvasSize.w, needed, "snap");
+    }
     return next;
   }
 

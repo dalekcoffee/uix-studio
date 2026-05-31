@@ -275,7 +275,8 @@ function ComponentEditor({
           </div>
         )}
         {component.type === "Button" && slot && (
-          <div className="col-span-2">
+          <div className="col-span-2 flex flex-col gap-2">
+            <ButtonLabelField slot={slot} />
             <ButtonPresetSection slot={slot} />
           </div>
         )}
@@ -504,6 +505,50 @@ function SpacerSection({ slot }: { slot: Slot }) {
         reposition; it exports as nothing.
       </div>
     </div>
+  );
+}
+
+// Locate the caption Text a button drives. Resonite renders one Graphic per
+// slot, so a button's text lives on a nested "Label" child (the standard preset
+// pattern) rather than co-located with the Button's Image. Resolve, in order:
+// a direct child named "Label" carrying a Text, then any direct child with a
+// Text, then a Text co-located on the button slot itself. Icon-only buttons
+// (a child icon Image, no Text anywhere) return null.
+function findButtonCaption(slot: Slot): { slotId: string; text: string } | null {
+  const textOf = (s: Slot) => {
+    const t = s.components.find((c) => c.type === "Text");
+    return t ? (((t.props as Record<string, unknown>).content as string) ?? "") : null;
+  };
+  const named = slot.children.find(
+    (ch) => ch.name.trim().toLowerCase() === "label" && ch.components.some((c) => c.type === "Text"),
+  );
+  if (named) return { slotId: named.id, text: textOf(named) ?? "" };
+  const anyChild = slot.children.find((ch) => ch.components.some((c) => c.type === "Text"));
+  if (anyChild) return { slotId: anyChild.id, text: textOf(anyChild) ?? "" };
+  const self = textOf(slot);
+  if (self !== null) return { slotId: slot.id, text: self };
+  return null;
+}
+
+// Editable button caption, surfaced directly in the Button component's section
+// so the label is customizable without hunting for the nested "Label" slot.
+// Writes straight to the caption Text's `content` (same store path the Text
+// component's own field uses). Hidden for icon-only buttons (no text to edit).
+function ButtonLabelField({ slot }: { slot: Slot }) {
+  const setProp = useStore((s) => s.setProp);
+  const caption = findButtonCaption(slot);
+  if (!caption) return null;
+  return (
+    <label className="flex min-w-0 flex-col gap-1 text-xs text-slate-300">
+      <span className="truncate text-[10px] uppercase tracking-wide text-slate-500">Label</span>
+      <input
+        type="text"
+        value={caption.text}
+        placeholder="Button text…"
+        onChange={(e) => setProp(caption.slotId, "Text", "content", e.target.value)}
+        className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-slate-100 outline-none focus:border-sky-500"
+      />
+    </label>
   );
 }
 

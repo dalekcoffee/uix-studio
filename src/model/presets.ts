@@ -2207,18 +2207,32 @@ function buildShowcasePanel(): Slot {
     c("Text", { content: "UIX Studio", size: 42, color: WHITE, horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false }),
   ]);
   // Brand underline accent beneath the title. Named "Accent Bar" so the theme's
-  // accent color drives it (instead of staying hardcoded brand-blue).
+  // accent color drives it (instead of staying hardcoded brand-blue). NOT marked
+  // structural: structural slots are hidden from the Hierarchy and unselectable on
+  // canvas (reserved for the real Background chrome), and they also get skipped by
+  // the size-preserving canvas resize (so they balloon when the canvas grows on
+  // add). These decorations are normal editable/deletable elements that simply sit
+  // behind the content by array order.
   const underline = slot("Accent Bar", [
     rt((W - 220) / 2, 90, (W + 220) / 2, 94),
-    c("Image", { tint: BRAND, preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+    c("Image", { tint: BRAND, preserveAspect: false, spriteUrl: "", cornerRadius: 100, placeholderRemoved: true }),
   ]);
-  underline.structural = true;
   const description = slot("Description", [
-    rt(150, 102, W - 150, 150),
+    rt(150, 98, W - 150, 136),
     c("Text", {
       content:
         "Design real Resonite panels right in your browser, then drop them straight into the game. Here's a taste of what you can build:",
       size: 15, color: MUTED, horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false,
+    }),
+  ]);
+  // Highlight line just below the description — the headline selling points.
+  // Larger than the description and accent-coloured so it pops; named "Highlights"
+  // (not "Body Text") so a theme switch keeps its size while re-skinning the color.
+  const highlights = slot("Highlights", [
+    rt(150, 140, W - 150, 166),
+    c("Text", {
+      content: "Requires no install, no account, and is free to use!",
+      size: 17, color: BRAND, horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false,
     }),
   ]);
 
@@ -2228,13 +2242,38 @@ function buildShowcasePanel(): Slot {
   // themeLock pins the white tint so the brand mark stays crisp — without it the
   // "Logo"-named accent pass would multiply the sprite by the theme accent and
   // recolor the logo's light pixels.
+  // The logo is clickable too — same link as the pill below. Just the
+  // hyperlinkUrl/Reason on the Image; the exporter wires a rect-routed Button +
+  // Hyperlink (on-canvas elements route clicks via a UIX Button, never a
+  // misaligned physics collider). themeLock keeps the sprite crisp.
   const logo = slot("Logo", [
     rt(455, 330, 645, 520),
-    c("Image", { tint: rgb(1, 1, 1), preserveAspect: true, spriteUrl: "", useLogoSprite: true, themeLock: true }),
+    c("Image", {
+      tint: rgb(1, 1, 1), preserveAspect: true, spriteUrl: "", useLogoSprite: true, themeLock: true,
+      hyperlinkUrl: "https://uix.dalek.coffee/", hyperlinkReason: "check out the tool :3",
+    }),
   ]);
   const wordmark = slot("Wordmark", [
     rt(380, 528, 720, 582),
     c("Text", { content: "UIX Studio", size: 32, color: BRAND, horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false }),
+  ]);
+  // Clickable link to the tool, centered under the wordmark. The Image carries
+  // hyperlinkUrl/hyperlinkReason — the exporter auto-injects a BoxCollider +
+  // Hyperlink sized to this rect, so clicking it opens the URL in Resonite (the
+  // "@" prefix that survives BSON import is added by compHyperlink). Caption sits
+  // on a child Label slot (one Graphic per slot).
+  const linkBar = slot("Link", [
+    rt(415, 596, 685, 632),
+    c("Image", {
+      tint: BRAND, preserveAspect: false, spriteUrl: "", cornerRadius: 100,
+      hyperlinkUrl: "https://uix.dalek.coffee/",
+      hyperlinkReason: "check out the tool :3",
+    }),
+  ], [
+    slot("Label", [
+      fillRT(),
+      c("Text", { content: "check out the tool :3", size: 15, color: WHITE, horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false }),
+    ]),
   ]);
 
   // ── Example control builders (real, positioned by a RectTransform) ────────────
@@ -2345,7 +2384,7 @@ function buildShowcasePanel(): Slot {
     ], [
       slot("Label", [
         fillRT(),
-        c("Text", { content: "Open ▸", size: 14, color: WHITE, horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false }),
+        c("Text", { content: "Open", size: 14, color: WHITE, horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false }),
       ]),
     ]);
   }
@@ -2393,11 +2432,18 @@ function buildShowcasePanel(): Slot {
   }
 
   function board(name: string, kicker: string, colL: number, colR: number, features: Feature[]): Slot[] {
+    // Board panel = a normal editable/deletable Image that sits behind its
+    // content by array order (NOT structural — see the Accent Bar note). Its
+    // overlap with the content layered on top is exempt via the warnings'
+    // "earlier sibling fully contains later" rule, and it keeps its size on a
+    // canvas grow because it's no longer skipped by the resize.
     const boardBg = slot(name, [
       rt(colL - 24, 168, colR + 24, 740),
-      c("Image", { tint: rgb(0.085, 0.092, 0.108), preserveAspect: false, spriteUrl: "", cornerRadius: 14 }),
+      // placeholderRemoved: it's a deliberate solid panel, not a "drop image here"
+      // slot — without this the editor's empty-Image detector dresses it up as a
+      // hatched placeholder (it no longer reads as structural chrome).
+      c("Image", { tint: rgb(0.085, 0.092, 0.108), preserveAspect: false, spriteUrl: "", cornerRadius: 14, placeholderRemoved: true }),
     ]);
-    boardBg.structural = true;
 
     const kickerSlot = slot(`${name} Kicker`, [
       rt(colL, 184, colR, 206),
@@ -2447,9 +2493,8 @@ function buildShowcasePanel(): Slot {
   const rightR = 1036;
   const rightBoardBg = slot("Right Board", [
     rt(rightL - 24, 168, rightR + 24, 740),
-    c("Image", { tint: rgb(0.085, 0.092, 0.108), preserveAspect: false, spriteUrl: "", cornerRadius: 14 }),
+    c("Image", { tint: rgb(0.085, 0.092, 0.108), preserveAspect: false, spriteUrl: "", cornerRadius: 14, placeholderRemoved: true }),
   ]);
-  rightBoardBg.structural = true;
   const rightKicker = slot("Right Board Kicker", [
     rt(rightL, 184, rightR, 206),
     c("Text", { content: "MORE CONTROLS", size: 12, color: BRAND, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
@@ -2508,9 +2553,11 @@ function buildShowcasePanel(): Slot {
       scrollSection,
       logo,
       wordmark,
+      linkBar,
       headerTitle,
       underline,
       description,
+      highlights,
       closeBtn,
     ],
   );

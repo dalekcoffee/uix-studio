@@ -5176,11 +5176,26 @@ function serializeSlot(
   _pendingImageExtras = savedPendingExtras;
   _currentImageRect = savedImageRect;
 
-  // Auto-inject BoxCollider + Hyperlink when this slot has an Image with a
-  // non-empty `hyperlinkUrl` prop and isn't already manually wired with both.
-  // Sizes the collider from the pre-computed slot rect so clicks land inside
-  // the image's bounds. Sibling collider+hyperlink already authored by the
-  // user wins; we skip auto-injection in that case to avoid double-clicks.
+  // Auto-inject a click trigger + Hyperlink when this slot has an Image with a
+  // non-empty `hyperlinkUrl` prop and isn't already wired with a Hyperlink.
+  //
+  // CRITICAL — how the click reaches the Hyperlink depends on whether this is a
+  // UIX element (inside a Canvas) or a free-standing slot, because a physics
+  // BoxCollider is ALWAYS centred on the slot's transform origin
+  // (compBoxCollider Offset = 0,0,0):
+  //   • On-canvas (slot has a RectTransform): the element is drawn at its
+  //     RectTransform rect while the slot transform stays at the origin, so a
+  //     BoxCollider would sit at the origin — NOT under the visual — and the link
+  //     is unclickable (the collider "doesn't line up with the button"). The fix
+  //     is to route the press through a UIX Button instead: the canvas rect-routes
+  //     the pointer to the button (ALWAYS aligned with the visual), and the
+  //     Hyperlink receives that press via IButtonPressReceiver. Add a static
+  //     Button only if the slot lacks one.
+  //   • Off-canvas (no RectTransform, e.g. a free-standing logo): the slot has a
+  //     real world position, so a BoxCollider centred on its origin DOES align —
+  //     keep the physics-collider path with a non-zero Z thickness.
+  // Never attach a bare BoxCollider to an on-canvas hyperlink — that is exactly
+  // the misalignment bug this guards against.
   if (!isCanvasSlot) {
     const imgWithLink = slot.components.find((c) => {
       if (c.type !== "Image") return false;
@@ -5188,17 +5203,8 @@ function serializeSlot(
       return url.length > 0;
     });
     if (imgWithLink) {
-      const alreadyHasCollider = slot.components.some((c) => c.type === "BoxCollider");
-      const alreadyHasLink     = slot.components.some((c) => c.type === "Hyperlink");
-      if (!alreadyHasCollider && !alreadyHasLink) {
-        const sz = _slotRectSizes.get(slot.id) ?? { w: 100, h: 100 };
-        // Min size of 1 keeps Resonite from rejecting a zero-volume collider.
-        const w = Math.max(1, sz.w);
-        const h = Math.max(1, sz.h);
-        // sizeZ=1 (canvas-pixel units → 1 mm world at the canvas's 0.001
-        // UnitScale) gives the box a non-degenerate thickness so off-canvas
-        // physics raycasts still hit it. Inside a canvas the UIX click path
-        // would work with Z=0 too, but this is safe in either case.
+      const alreadyHasLink = slot.components.some((c) => c.type === "Hyperlink");
+      if (!alreadyHasLink) {
         const imgProps = imgWithLink.props as { hyperlinkUrl?: string; hyperlinkReason?: string };
         const url = (imgProps.hyperlinkUrl ?? "").trim();
         const authoredReason = (imgProps.hyperlinkReason ?? "").trim();
@@ -5208,10 +5214,24 @@ function serializeSlot(
         // the user didn't supply a reason just so the confirmation isn't
         // empty-looking.
         const reason = authoredReason || url;
-        components.push({
-          Type: typeIndex("BoxCollider"),
-          Data: compBoxCollider(w, h, 1),
-        });
+        const hasRect   = slot.components.some((c) => c.type === "RectTransform");
+        const hasButton = slot.components.some((c) => c.type === "Button");
+        if (hasRect) {
+          // On-canvas → UIX Button rect-routing (aligned). A static Button (no
+          // ColorDrivers) is clickable but leaves the graphic's tint untouched.
+          if (!hasButton) {
+            components.push({ Type: typeIndex("Button"), Data: compButton({}) });
+          }
+        } else if (!slot.components.some((c) => c.type === "BoxCollider")) {
+          // Off-canvas → physics BoxCollider. sizeZ=1 (canvas-pixel units → 1 mm
+          // world at the 0.001 UnitScale) gives it non-degenerate thickness so the
+          // pointer raycast actually intersects it.
+          const sz = _slotRectSizes.get(slot.id) ?? { w: 100, h: 100 };
+          components.push({
+            Type: typeIndex("BoxCollider"),
+            Data: compBoxCollider(Math.max(1, sz.w), Math.max(1, sz.h), 1),
+          });
+        }
         components.push({
           Type: typeIndex("Hyperlink"),
           Data: compHyperlink({ url, openOnce: false, reason }),
