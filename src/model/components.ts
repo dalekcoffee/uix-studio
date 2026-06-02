@@ -42,6 +42,15 @@ const canvasSchema = z.object({
   // can clear or change it from the Canvas inspector. Empty = no link.
   backLogoHyperlinkUrl: z.string().default("https://uix.dalek.coffee"),
   backLogoHyperlinkReason: z.string().default("Check out the tool! :D"),
+  // Panel-level side padding (px): the left/right inset of top-level BODY
+  // content from the panel edges. Full-width Header / footer bars stay
+  // edge-to-edge (exempt). Default 16 matches the historical hardcoded margin,
+  // so it's a visual no-op until changed. Also the source value for nested
+  // container padding, which defaults to HALF this (see resolvePad in
+  // model/padding.ts). Applied by store.setContentPadding, which bakes the
+  // inset into each body element's RectTransform (so preview/grips/export stay
+  // consistent). Vertical rhythm stays spacing-driven (not insetn by this).
+  contentPadding: z.number().default(16),
 });
 
 const rectTransformSchema = z.object({
@@ -182,12 +191,17 @@ const buttonSchema = z.object({
   hoverVibrate: z.boolean().default(false),
 });
 
+// Container padding defaults are the -1 "auto / inherit" sentinel (mirrors the
+// LayoutElement min/preferred -1 convention): an unset side inherits HALF the
+// Canvas.contentPadding at render/export (see resolvePad in model/padding.ts);
+// an explicit >= 0 value wins. Every preset/template/widget sets padding
+// explicitly, so this default only affects user-added containers.
 const verticalLayoutSchema = z.object({
   spacing: z.number().default(4),
-  paddingTop: z.number().default(0),
-  paddingBottom: z.number().default(0),
-  paddingLeft: z.number().default(0),
-  paddingRight: z.number().default(0),
+  paddingTop: z.number().default(-1),
+  paddingBottom: z.number().default(-1),
+  paddingLeft: z.number().default(-1),
+  paddingRight: z.number().default(-1),
   horizontalAlign: z.enum(["Left", "Center", "Right"]).default("Left"),
   verticalAlign: z.enum(["Top", "Middle", "Bottom"]).default("Top"),
   forceExpandWidth: z.boolean().default(true),
@@ -196,10 +210,10 @@ const verticalLayoutSchema = z.object({
 
 const horizontalLayoutSchema = z.object({
   spacing: z.number().default(4),
-  paddingTop: z.number().default(0),
-  paddingBottom: z.number().default(0),
-  paddingLeft: z.number().default(0),
-  paddingRight: z.number().default(0),
+  paddingTop: z.number().default(-1),
+  paddingBottom: z.number().default(-1),
+  paddingLeft: z.number().default(-1),
+  paddingRight: z.number().default(-1),
   horizontalAlign: z.enum(["Left", "Center", "Right"]).default("Left"),
   verticalAlign: z.enum(["Top", "Middle", "Bottom"]).default("Top"),
   forceExpandWidth: z.boolean().default(false),
@@ -211,10 +225,10 @@ const gridLayoutSchema = z.object({
   cellSizeY: z.number().default(80),
   spacingX: z.number().default(4),
   spacingY: z.number().default(4),
-  paddingTop: z.number().default(0),
-  paddingBottom: z.number().default(0),
-  paddingLeft: z.number().default(0),
-  paddingRight: z.number().default(0),
+  paddingTop: z.number().default(-1),
+  paddingBottom: z.number().default(-1),
+  paddingLeft: z.number().default(-1),
+  paddingRight: z.number().default(-1),
   horizontalAlign: z.enum(["Left", "Center", "Right"]).default("Left"),
   verticalAlign: z.enum(["Top", "Middle", "Bottom"]).default("Top"),
 });
@@ -470,7 +484,8 @@ const scrollAreaSchema = z.object({
   direction: z.enum(["Vertical", "Horizontal", "Both"]).default("Vertical"),
   backgroundTint: color.default({ r: 0.07, g: 0.08, b: 0.11, a: 1 }),
   spacing: z.number().default(4),
-  padding: z.number().default(8),
+  // -1 = inherit half the Canvas.contentPadding (see resolvePad); explicit wins.
+  padding: z.number().default(-1),
   showScrollbar: z.boolean().default(true),
   scrollbarTrackTint: color.default({ r: 0.15, g: 0.17, b: 0.21, a: 1 }),
   scrollbarThumbTint: color.default({ r: 0.55, g: 0.60, b: 0.68, a: 1 }),
@@ -490,7 +505,61 @@ const scrollAreaSchema = z.object({
 const radioGroupSchema = z.object({
   groupId: z.string().default("group1"),
   initialIndex: z.number().int().default(0),
+  // List-driven editing (v0.1.39): the option labels live here, one per line, and
+  // the editor regenerates the option ring/label child slots from this list (add/
+  // remove/rename without hand-building slots). Empty = derive the list from the
+  // existing option slots (migrates legacy/preset groups on first edit).
+  options: z.string().default(""),
+  // Where each option's label sits relative to its dot (applied uniformly).
+  // "none" = bare dots, no per-option text.
+  labelPosition: z.enum(["up", "down", "left", "right", "none"]).default("right"),
+  // Lay the options out as a horizontal row or a vertical list.
+  orientation: z.enum(["horizontal", "vertical"]).default("horizontal"),
 });
+
+// Tabs marks the host slot of a tabbed container. Its children are a "Tab Bar"
+// (a Horizontal/Vertical layout of TabButton slots) followed by N TabPage
+// slots. Exactly one page is visible at runtime, selected by a shared
+// ValueField<int> the exporter adds to this host: each TabButton writes its
+// positional index into it on click, and each TabPage's Active is driven by a
+// ValueEqualityDriver<int> comparing that field to the page's positional index.
+// `activeTab` is the editor-selected page AND the exported initial selection.
+//   orientation — "Horizontal" puts the tab strip on TOP (a horizontal row of
+//                 tabs); "Vertical" puts it on the LEFT (a vertical stack).
+//   tabBarSize  — strip height (Horizontal) / width (Vertical), in px.
+//   pagePadding — inner padding inside each page (≈ half the canvas margin) so
+//                 content doesn't hug the edges.
+const tabsSchema = z.object({
+  orientation: z.enum(["Horizontal", "Vertical"]).default("Horizontal"),
+  // Which side the tab bar sits on. top/bottom ⇒ a horizontal strip
+  // (orientation Horizontal); left/right ⇒ a vertical strip (orientation
+  // Vertical). The authoritative control; `orientation` is kept in sync for
+  // export + back-compat.
+  tabPosition: z.enum(["top", "bottom", "left", "right"]).default("top"),
+  activeTab: z.number().int().default(0),
+  tabBarSize: z.number().default(40),
+  tabSpacing: z.number().default(3),
+  // -1 = inherit half the Canvas.contentPadding (see resolvePad); explicit wins.
+  pagePadding: z.number().default(-1),
+  // Active tab fill — defaults to the SAME color as pageColor so the selected
+  // tab merges into the content panel below it (folder-tab connection).
+  activeColor:   color.default({ r: 0.16, g: 0.18, b: 0.23, a: 1 }),
+  // Inactive tabs sit recessed against the frame.
+  inactiveColor: color.default({ r: 0.11, g: 0.12, b: 0.15, a: 1 }),
+  // Content panel surface (shared with the active tab).
+  pageColor:     color.default({ r: 0.16, g: 0.18, b: 0.23, a: 1 }),
+  // Outer frame / header backdrop — the card the whole tabbed group sits on.
+  frameColor:    color.default({ r: 0.09, g: 0.10, b: 0.13, a: 1 }),
+  labelColor:    color.default({ r: 0.95, g: 0.95, b: 0.95, a: 1 }),
+});
+
+// TabButton / TabPage: empty markers. A TabButton's index is its position among
+// the Tab Bar's children; a TabPage's index is its position among the host's
+// TabPage children. Keeping index positional means reordering tabs is a pure
+// array swap with no field resync. TabPage carries no layout component so the
+// snap engine treats it as an absolute container (full side-by-side dragging).
+const tabButtonSchema = z.object({});
+const tabPageSchema = z.object({});
 
 // Editor-only spacer marker — carries no real props; its slot's RectTransform
 // holds the reserved height. Exports as a plain empty slot.
@@ -528,6 +597,9 @@ export const COMPONENT_SCHEMAS = {
   Close: closeSchema,
   ReferenceField: referenceFieldSchema,
   ScrollArea: scrollAreaSchema,
+  Tabs: tabsSchema,
+  TabButton: tabButtonSchema,
+  TabPage: tabPageSchema,
   Spacer: spacerSchema,
 } satisfies Record<UixComponentType, z.ZodTypeAny>;
 
@@ -590,6 +662,9 @@ export const FIELD_DESCRIPTORS: Record<UixComponentType, readonly FieldDescripto
     { key: "backgroundColor", label: "Background Color", kind: "color" },
     { key: "rounded", label: "Rounded Corners", kind: "boolean" },
     { key: "stackLayout", label: "Stack Layout (reorderable in-game)", kind: "boolean" },
+    // Panel side padding. Insets top-level content from the left/right edges and
+    // sets the inherited default (half) for nested containers' inner padding.
+    { key: "contentPadding", label: "Content Padding", kind: "number", min: 0, step: 1, unit: "px" },
     // Back-logo URL/reason moved to the Theme menu (bottom-left of the editor).
   ],
   RectTransform: [
@@ -761,11 +836,13 @@ export const FIELD_DESCRIPTORS: Record<UixComponentType, readonly FieldDescripto
     { key: "onOffsetMin",  label: "On Offset Min",  kind: "vec2" },
     { key: "onOffsetMax",  label: "On Offset Max",  kind: "vec2" },
   ],
-  Popup: [
-    { key: "title",        label: "Title",         kind: "string" },
-    { key: "body",         label: "Body",          kind: "string" },
-    { key: "dismissLabel", label: "Dismiss Label", kind: "string" },
-  ],
+  // No editable fields: the dialog's title/body/dismiss text are edited directly
+  // on the card via the "Edit popup dialog…" surface, so exposing the schema's
+  // title/body/dismissLabel here only confused users (editing them did nothing
+  // once the card was built). Those props live on in the schema purely as the
+  // initial seed for ensurePopupContent and the export fallback for un-edited
+  // popups — they're plumbing, not user-facing.
+  Popup: [],
   // Markers — no editable fields (the card is edited by arranging its children).
   PopupContent: [],
   PopupDismiss: [],
@@ -803,13 +880,13 @@ export const FIELD_DESCRIPTORS: Record<UixComponentType, readonly FieldDescripto
     { key: "initiallySelected", label: "Initially Selected", kind: "boolean" },
     { key: "selectedColor", label: "Selected Color", kind: "color" },
   ],
-  RadioGroup: [
-    { key: "groupId", label: "Group ID", kind: "string" },
-    { key: "initialIndex", label: "Initial Index", kind: "number" },
-  ],
+  // Edited via the custom RadioGroupInspector (options list + label position +
+  // orientation). groupId/initialIndex/options/labelPosition/orientation are all
+  // driven from there, so no raw fields here.
+  RadioGroup: [],
+  // options + initialIndex are edited via the custom DropdownInspector (the same
+  // add/remove/rename list UX as the radial group); only the colors are raw fields.
   Dropdown: [
-    { key: "options", label: "Options (one per line)", kind: "string" },
-    { key: "initialIndex", label: "Initial Index", kind: "number" },
     { key: "optionFillColor",  label: "Option Fill Color",  kind: "color" },
     { key: "optionLabelColor", label: "Option Label Color", kind: "color" },
   ],
@@ -845,6 +922,26 @@ export const FIELD_DESCRIPTORS: Record<UixComponentType, readonly FieldDescripto
     { key: "scrollbarThumbTint", label: "Scrollbar Thumb",     kind: "color", visibleWhen: { key: "showScrollbar", value: true } },
     { key: "scrollbarRoundness", label: "Scrollbar Roundness", kind: "slider", min: 0, max: 100, step: 1, unit: "%", visibleWhen: { key: "showScrollbar", value: true } },
   ],
+  Tabs: [
+    {
+      key: "orientation",
+      label: "Tab Strip",
+      kind: "enum",
+      options: ["Horizontal", "Vertical"],
+    },
+    { key: "activeTab",   label: "Active Tab",   kind: "number" },
+    { key: "tabBarSize",  label: "Tab Bar Size", kind: "number" },
+    { key: "tabSpacing",  label: "Tab Spacing",  kind: "number" },
+    { key: "pagePadding", label: "Page Padding", kind: "number" },
+    { key: "activeColor",   label: "Active Tab Color",   kind: "color" },
+    { key: "inactiveColor", label: "Inactive Tab Color", kind: "color" },
+    { key: "pageColor",     label: "Page Background",     kind: "color" },
+    { key: "frameColor",    label: "Frame Color",         kind: "color" },
+    { key: "labelColor",    label: "Label Color",         kind: "color" },
+  ],
+  // Markers — no editable fields (tabs are edited by clicking/arranging).
+  TabButton: [],
+  TabPage: [],
   // Spacer height is edited via a bespoke control (SpacerSection) that resizes
   // the slot's RectTransform, so no plain field descriptors here.
   Spacer: [],

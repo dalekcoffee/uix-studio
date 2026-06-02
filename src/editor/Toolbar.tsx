@@ -11,6 +11,9 @@ import WarningsMenu from "./WarningsMenu";
 import LibraryMenu from "./LibraryMenu";
 import HelpMenu from "./HelpMenu";
 import ShortcutsMenu from "./ShortcutsMenu";
+import LanguageMenu from "./LanguageMenu";
+import WhatsNew from "./WhatsNew";
+import { useT } from "../locale/useT";
 
 export default function Toolbar() {
   const documentSnapshot = useStore((s) => s.documentSnapshot);
@@ -25,6 +28,9 @@ export default function Toolbar() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [exportDone, setExportDone] = useState(false);
+  const whatsNewOpen = useStore((s) => s.whatsNewOpen);
+  const setWhatsNewOpen = useStore((s) => s.setWhatsNewOpen);
+  const t = useT();
 
   function onSave() {
     const blob = exportNativeFile(documentSnapshot());
@@ -44,7 +50,7 @@ export default function Toolbar() {
       setExportDone(true);
       await new Promise((resolve) => setTimeout(resolve, 2000));
     } catch (err) {
-      await dialog.alert(`Export failed: ${(err as Error).message}`);
+      await dialog.alert(t.toolbar.exportFailed((err as Error).message));
     } finally {
       setIsExporting(false);
       setExportDone(false);
@@ -55,11 +61,17 @@ export default function Toolbar() {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
+    // Opening a project replaces the whole canvas — confirm first if there's
+    // unsaved work, matching the New / Preset flows (which already guard).
+    if (useStore.getState().dirty) {
+      const ok = await dialog.confirm(t.toolbar.openConfirm);
+      if (!ok) return;
+    }
     try {
       const doc = await importNativeFile(file);
       loadDocument(doc);
     } catch (err) {
-      await dialog.alert(`Failed to import file: ${(err as Error).message}`);
+      await dialog.alert(t.toolbar.importFailed((err as Error).message));
     }
   }
 
@@ -72,29 +84,34 @@ export default function Toolbar() {
       />
       <div className="flex flex-col leading-tight">
         <span className="font-semibold text-slate-100">UIX Studio</span>
-        <span className="flex items-center gap-1 text-[10px] text-slate-500">
+        <button
+          type="button"
+          onClick={() => setWhatsNewOpen(true)}
+          title={t.toolbar.whatsNewTip}
+          className="flex items-center gap-1 rounded text-[10px] text-slate-500 transition hover:text-sky-300 hover:underline"
+        >
           v{APP_VERSION}
           {APP_CHANNEL && (
             <span className="rounded bg-amber-500/20 px-1 text-[9px] font-semibold uppercase tracking-wide text-amber-300">
               {APP_CHANNEL}
             </span>
           )}
-        </span>
+        </button>
       </div>
       <Divider />
 
       <ToolbarGroup label="File">
         <ToolbarButton
           onClick={onSave}
-          title="Save Project — downloads an editable .uixstudio.json you can reopen here later. This is NOT the Resonite file; use Export for that."
+          title={t.toolbar.saveProjectTip}
         >
-          💾 Save Project
+          {t.toolbar.saveProject}
         </ToolbarButton>
         <ToolbarButton
           onClick={() => fileInputRef.current?.click()}
-          title="Open a previously saved .uixstudio.json project to keep editing"
+          title={t.toolbar.openProjectTip}
         >
-          Open Project…
+          {t.toolbar.openProject}
         </ToolbarButton>
         <input
           ref={fileInputRef}
@@ -107,10 +124,10 @@ export default function Toolbar() {
           <ToolbarButton
             onClick={onExportBrson}
             disabled={isExporting}
-            title="Export to Resonite — downloads a .resonitepackage; drag it straight into the game to import. (To keep editing later, use Save Project too.)"
+            title={t.toolbar.exportTip}
             variant="primary"
           >
-            ⬇ Export to Resonite
+            {t.toolbar.exportResonite}
           </ToolbarButton>
           {isExporting && (
             <div
@@ -123,10 +140,10 @@ export default function Toolbar() {
                   aria-hidden="true"
                   className={`inline-block h-4 w-4 rounded-full border-2 border-sky-300 border-t-transparent ${exportDone ? "opacity-0" : "animate-spin"}`}
                 />
-                {exportDone ? "Exported!" : "Exporting…"}
+                {exportDone ? t.toolbar.exported : t.toolbar.exporting}
               </div>
               <span className="text-[0.7rem] text-sky-300/70">
-                Consider also saving the project for easier editing in the future
+                {t.toolbar.exportSaveHint}
               </span>
             </div>
           )}
@@ -136,19 +153,19 @@ export default function Toolbar() {
       <Divider />
 
       <ToolbarGroup label="Edit">
-        <ToolbarButton onClick={undo} disabled={!canUndo} title="Undo (Ctrl+Z)">
-          ↶ Undo
+        <ToolbarButton onClick={undo} disabled={!canUndo} title={t.toolbar.undoTip}>
+          {t.toolbar.undo}
         </ToolbarButton>
-        <ToolbarButton onClick={redo} disabled={!canRedo} title="Redo (Ctrl+Y)">
-          ↷ Redo
+        <ToolbarButton onClick={redo} disabled={!canRedo} title={t.toolbar.redoTip}>
+          {t.toolbar.redo}
         </ToolbarButton>
         <ToolbarButton
           onClick={async () => {
-            if (await dialog.confirm("Discard the current panel and start fresh?", { confirmLabel: "Discard", destructive: true })) reset();
+            if (await dialog.confirm(t.toolbar.newConfirm, { confirmLabel: t.toolbar.newConfirmLabel, destructive: true })) reset();
           }}
-          title="Start a new panel"
+          title={t.toolbar.newTip}
         >
-          New
+          {t.toolbar.newBtn}
         </ToolbarButton>
       </ToolbarGroup>
 
@@ -169,10 +186,13 @@ export default function Toolbar() {
 
       <div className="ml-auto flex items-center gap-2 text-slate-400">
         <span className="hidden md:inline text-[10px] text-amber-300">
-          Note: this tool only builds the UIX, it does not provide protoflux backend logic
+          {t.toolbar.protofluxNote}
         </span>
+        <LanguageMenu />
         <CreditHoverMenu />
       </div>
+
+      {whatsNewOpen && <WhatsNew onClose={() => setWhatsNewOpen(false)} />}
     </div>
   );
 }
@@ -202,6 +222,7 @@ const CREDIT_HOVER_CLOSE_DELAY_MS = 600;
 function CreditHoverMenu() {
   const [open, setOpen] = useState(false);
   const closeTimerRef = useRef<number | null>(null);
+  const t = useT();
 
   function cancelClose() {
     if (closeTimerRef.current !== null) {
@@ -223,18 +244,31 @@ function CreditHoverMenu() {
   useEffect(() => () => cancelClose(), []);
 
   return (
-    <div className="relative" onMouseEnter={handleEnter} onMouseLeave={handleLeave}>
-      <div
-        className="flex cursor-default items-center gap-2 text-slate-400"
+    // onFocus/onBlur (which bubble from the trigger + the links inside) give the
+    // popover keyboard parity with hover; the same close-delay timer bridges the
+    // focus moving from trigger → link. Click toggles it for touch users.
+    <div
+      className="relative"
+      onMouseEnter={handleEnter}
+      onMouseLeave={handleLeave}
+      onFocus={handleEnter}
+      onBlur={handleLeave}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="true"
+        aria-expanded={open}
+        className="flex cursor-pointer items-center gap-2 border-0 bg-transparent p-0 text-slate-400"
         title={APP_AUTHOR}
       >
-        <span className="text-white">Slopcoded by {APP_AUTHOR}</span>
+        <span className="text-white">{t.toolbar.slopcodedBy(APP_AUTHOR)}</span>
         <img
           src="./Dalek.png"
           alt={APP_AUTHOR}
           className="h-6 w-6 rounded-full ring-1 ring-slate-700"
         />
-      </div>
+      </button>
       {open && (
         <div
           // pt-1 (rather than mt-1 on the popover) bakes the breathing-room
@@ -252,7 +286,7 @@ function CreditHoverMenu() {
               className="flex items-center gap-2 border-b border-slate-800 px-3 py-2 text-xs text-slate-200 transition hover:bg-slate-800 hover:text-sky-200"
             >
               <span aria-hidden>🌐</span>
-              <span>Visit my website</span>
+              <span>{t.toolbar.visitWebsite}</span>
             </a>
             <a
               href="https://ko-fi.com/dalekcoffee"
@@ -261,7 +295,7 @@ function CreditHoverMenu() {
               className="flex items-center gap-2 px-3 py-2 text-xs text-slate-200 transition hover:bg-slate-800 hover:text-rose-200"
             >
               <span aria-hidden>☕</span>
-              <span>Buy me a coffee</span>
+              <span>{t.toolbar.buyCoffee}</span>
             </a>
           </div>
         </div>

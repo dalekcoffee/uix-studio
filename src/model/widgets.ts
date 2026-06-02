@@ -305,6 +305,98 @@ function buildScrollArea(cascade: number): Slot {
   return wrap("Scroll Area", 300, 200, cascade, [viewport]);
 }
 
+// A tabbed container: a Tab Bar (Horizontal/Vertical layout of TabButton slots)
+// followed by N full-rect TabPage slots, exactly one visible at a time. Mirrors
+// the structure the exporter lowers into shared-ValueField<int> + per-button
+// ButtonValueSet<int> + per-page ValueEqualityDriver<int>→Active wiring. Index
+// is positional (array order) for both buttons and pages, so reordering is a
+// pure swap. The editor shows only the page at Tabs.activeTab (see the TabPage
+// gate in the render layer); inactive pages overlap it but are hidden.
+function buildTabs(cascade: number): Slot {
+  const TAB_COUNT = 3;
+  const barSize = 40;   // tab strip height
+  const overlap = 8;    // content panel tucks under the bar this much → the
+                        // active tab's rounded bottom hides behind the body
+                        // (folder-tab connection, no gap/notch)
+  const edge = 6;       // content inset from the frame edges (frame = thin border)
+  const spacing = 3;
+  const pad = 12;       // ≈ half the canvas margin — inner page padding
+  // Active tab shares the content color so the selected tab MERGES into the
+  // body; inactive tabs recede; the frame is the darker card behind everything.
+  const contentColor  = rgb(0.16, 0.18, 0.23, 1);
+  const inactiveColor = rgb(0.11, 0.12, 0.15, 1);
+  const frameColor    = rgb(0.09, 0.10, 0.13, 1);
+  const labelColor    = rgb(0.95, 0.95, 0.95, 1);
+
+  // One tab button in the bar. Layout-sized (flexibleWidth/Height = 1 so tabs
+  // share the bar evenly). Label in a child slot (one graphic per slot). The
+  // active tab is tinted contentColor (matching the body); in-game the exporter
+  // drives this tint by selection.
+  const tabButton = (i: number, label: string, active: boolean): Slot =>
+    s(`Tab ${i + 1}`, [
+      fillRT(),
+      c("Image", { tint: active ? contentColor : inactiveColor, preserveAspect: false, spriteUrl: "", cornerRadius: 8 }),
+      c("Button", { normalColor: active ? contentColor : inactiveColor, highlightColor: rgb(0.22, 0.25, 0.32), pressColor: rgb(0.10, 0.11, 0.14), disabledColor: rgb(0.3, 0.3, 0.3), hoverVibrate: false }),
+      c("TabButton", {}),
+      c("LayoutElement", { minWidth: -1, minHeight: -1, preferredWidth: -1, preferredHeight: -1, flexibleWidth: 1, flexibleHeight: 1, orderOffset: i }),
+    ], [
+      s("Label", [
+        fillRT(),
+        c("Text", { content: label, size: 14, color: labelColor, horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false }),
+      ]),
+    ]);
+
+  // One page: the content panel. Sides/bottom inset by `edge` (frame shows as a
+  // border); top extends UP into the bar by `overlap` so the active tab tucks
+  // behind it. The page is a later sibling than the bar, so it draws over the
+  // tab bottoms. Absolute container (TabPage marker, no layout) → full
+  // side-by-side snap dragging inside. Ships a centered placeholder label.
+  const page = (i: number, label: string): Slot =>
+    s(`Page ${i + 1}`, [
+      c("RectTransform", {
+        anchorMin: { x: 0, y: 0 }, anchorMax: { x: 1, y: 1 },
+        offsetMin: { x: edge, y: edge }, offsetMax: { x: -edge, y: -(barSize - overlap) },
+        pivot: { x: 0.5, y: 0.5 },
+      }),
+      c("Image", { tint: contentColor, preserveAspect: false, spriteUrl: "", cornerRadius: 8 }),
+      c("TabPage", {}),
+    ], [
+      s("Label", [
+        c("RectTransform", {
+          anchorMin: { x: 0, y: 0 }, anchorMax: { x: 1, y: 1 },
+          offsetMin: { x: pad, y: pad }, offsetMax: { x: -pad, y: -pad },
+          pivot: { x: 0.5, y: 0.5 },
+        }),
+        c("Text", { content: `${label} content`, size: 16, color: labelColor, horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false }),
+      ]),
+    ]);
+
+  const bar = s("Tab Bar", [
+    c("RectTransform", {
+      anchorMin: { x: 0, y: 1 }, anchorMax: { x: 1, y: 1 },
+      offsetMin: { x: 0, y: -barSize }, offsetMax: { x: 0, y: 0 },
+      pivot: { x: 0.5, y: 0.5 },
+    }),
+    c("HorizontalLayout", {
+      spacing, paddingTop: 5, paddingBottom: 0, paddingLeft: 6, paddingRight: 6,
+      horizontalAlign: "Center", verticalAlign: "Top",
+      forceExpandWidth: true, forceExpandHeight: true,
+    }),
+  ], Array.from({ length: TAB_COUNT }, (_, i) => tabButton(i, `Tab ${i + 1}`, i === 0)));
+
+  const pages = Array.from({ length: TAB_COUNT }, (_, i) => page(i, `Tab ${i + 1}`));
+
+  return wrap("Tabs", 380, 260, cascade, [bar, ...pages], [
+    // Frame: the card the whole tabbed group sits on (drawn behind bar + pages).
+    c("Image", { tint: frameColor, preserveAspect: false, spriteUrl: "", cornerRadius: 12 }),
+    c("Tabs", {
+      orientation: "Horizontal", activeTab: 0,
+      tabBarSize: barSize, tabSpacing: spacing, pagePadding: pad,
+      activeColor: contentColor, inactiveColor, pageColor: contentColor, frameColor, labelColor,
+    }),
+  ]);
+}
+
 // Build the editable content card for a popup dialog. Returns a center-anchored
 // ABSOLUTE container slot (PopupContent marker, no layout component) holding a
 // Title text, a Body text, and a Dismiss button — laid out to match the
@@ -456,6 +548,7 @@ const BUILDERS: Partial<Record<PaletteItem, (cascade: number) => Slot>> = {
   Radio: buildRadio,
   RadioGroup: buildRadioGroup,
   ScrollArea: buildScrollArea,
+  Tabs: buildTabs,
   // Widget-only pseudo-type (not a UixComponent) — see palette.ts WIDGET_ONLY_ITEMS.
   Spinner: buildSpinner,
 };

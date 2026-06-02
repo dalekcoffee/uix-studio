@@ -2,6 +2,8 @@ import { v4 as uuid } from "uuid";
 import type { Slot, UixComponent } from "./types";
 import { isStructuralName } from "./structural";
 import { buildBackgroundTrio } from "./background";
+import { getDict } from "../locale";
+import { DEFAULT_LANG, type Lang } from "../locale/types";
 
 function id() {
   return uuid();
@@ -82,7 +84,12 @@ const midGray = () => rgb(0.22, 0.22, 0.22);
 // bar, and color Swatches — to avoid implying interactivity that doesn't work.
 // Button A / Button B / Close are real working Buttons (with ColorDriver →
 // SmoothValue<colorX> → Image.Tint hover/press animation).
-export function createStarterTemplate(): Slot {
+export function createStarterTemplate(lang: Lang = DEFAULT_LANG): Slot {
+  // Designed-panel TEXT is localized at generation time (Text content, Popup
+  // copy, TextField values, Dropdown options, control labels). Slot NAMES stay
+  // English — they're structural identifiers consumed by the exporter and
+  // controlName.ts, not user-facing copy.
+  const txt = getDict(lang).content;
   // ── Header bar (full width, 56px at top) ──────────────────────────────────
   // The Icon (top-left) and Close (top-right) slots use a child slot for the
   // icon glyph image, so the rounded background tint and the icon sprite can
@@ -101,13 +108,13 @@ export function createStarterTemplate(): Slot {
     fillRT(),
     c("Image", { tint: rgb(0.25, 0.25, 0.25), preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
     c("Button", { normalColor: rgb(0.25, 0.25, 0.25), highlightColor: rgb(0.35, 0.35, 0.35), pressColor: rgb(0.15, 0.15, 0.15), disabledColor: rgb(0.3, 0.3, 0.3), hoverVibrate: false }),
-    c("Popup", { title: "About this panel", body: "Replace this with your panel's description. Edit the Popup component on the Icon slot to change the title and body.", dismissLabel: "Got it" }),
+    c("Popup", { title: txt.iconPopupTitle, body: txt.iconPopupBody, dismissLabel: txt.iconPopupDismiss }),
     c("LayoutElement", { minWidth: 40, minHeight: 40, preferredWidth: 40, preferredHeight: -1, flexibleWidth: -1, flexibleHeight: -1, orderOffset: 0 }),
   ], [iconGlyph]);
 
   const titleSlot = slot("Title", [
     fillRT(),
-    c("Text", { content: "Example title", size: 18, color: white(), horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false }),
+    c("Text", { content: txt.exampleTitle, size: 18, color: white(), horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false }),
     c("LayoutElement", { minWidth: -1, minHeight: -1, preferredWidth: -1, preferredHeight: -1, flexibleWidth: 1, flexibleHeight: -1, orderOffset: 1 }),
   ]);
 
@@ -162,10 +169,7 @@ export function createStarterTemplate(): Slot {
   const bodyTextSlot = slot("Body Text", [
     topRT(16, 64, 16, 64),
     c("Text", {
-      content:
-        "Lorem ipsum dolor sit amet, consectetur adipiscing elit. " +
-        "Sed do eiusmod tempor incididunt ut labore et dolore magna " +
-        "aliqua. Ut enim ad minim veniam, quis nostrud exercitation.",
+      content: txt.bodyText,
       size: 13,
       color: rgb(0.72, 0.72, 0.76),
       horizontalAlign: "Left",
@@ -204,10 +208,12 @@ export function createStarterTemplate(): Slot {
       offsetMin: { x: 0, y: 0 }, offsetMax: { x: -40, y: 0 },
       pivot: { x: 0.5, y: 0.5 },
     }),
-    c("Text", { content: "Enable feature", size: 14, color: white(), horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+    c("Text", { content: txt.enableFeature, size: 14, color: white(), horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
   ]);
+  // Moved into Tab 1 ("Inputs") below — re-anchored page-relative (stacked at
+  // 48px pitch from the page top) instead of absolute canvas Y.
   const checkboxRow = slot("Checkbox", [
-    topRT(16, 136, 16, 36),
+    topRT(16, 12, 16, 36),
   ], [checkboxBox, checkboxLabel]);
 
   // ── Toggle row ─────────────────────────────────────────────────────────────
@@ -257,10 +263,10 @@ export function createStarterTemplate(): Slot {
       offsetMin: { x: 0, y: 0 }, offsetMax: { x: -72, y: 0 },
       pivot: { x: 0.5, y: 0.5 },
     }),
-    c("Text", { content: "Online", size: 14, color: white(), horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+    c("Text", { content: txt.online, size: 14, color: white(), horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
   ]);
   const toggleRow = slot("Toggle", [
-    topRT(16, 184, 16, 36),
+    topRT(16, 60, 16, 36),
   ], [togglePill, toggleLabel]);
 
   // ── Slider row ─────────────────────────────────────────────────────────────
@@ -294,10 +300,10 @@ export function createStarterTemplate(): Slot {
       offsetMin: { x: 0, y: 0 }, offsetMax: { x: -212, y: 0 },
       pivot: { x: 0.5, y: 0.5 },
     }),
-    c("Text", { content: "Volume", size: 14, color: white(), horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+    c("Text", { content: txt.volume, size: 14, color: white(), horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
   ]);
   const sliderRow = slot("Slider", [
-    topRT(16, 232, 16, 36),
+    topRT(16, 108, 16, 36),
   ], [sliderTrack, sliderLabel]);
 
   // ── Text Field row ─────────────────────────────────────────────────────────
@@ -314,7 +320,7 @@ export function createStarterTemplate(): Slot {
     c("Image", { tint: rgb(0.12, 0.12, 0.12), preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
     c("TextField", {
       placeholder: "",
-      textContent: "Edit me",
+      textContent: txt.editMe,
       textAlign: "Center",
       fontSize: 16,
       textColor: rgb(0.9, 0.9, 0.9),
@@ -328,10 +334,10 @@ export function createStarterTemplate(): Slot {
       offsetMin: { x: 0, y: 0 }, offsetMax: { x: -292, y: 0 },
       pivot: { x: 0.5, y: 0.5 },
     }),
-    c("Text", { content: "Text", size: 14, color: white(), horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+    c("Text", { content: txt.textLabel, size: 14, color: white(), horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
   ]);
   const textFieldRow = slot("Text Field", [
-    topRT(16, 280, 16, 36),
+    topRT(16, 156, 16, 36),
   ], [textFieldInputSlot, textFieldLabel]);
 
   // ── Float input row ────────────────────────────────────────────────────────
@@ -359,10 +365,10 @@ export function createStarterTemplate(): Slot {
       offsetMin: { x: 0, y: 0 }, offsetMax: { x: -292, y: 0 },
       pivot: { x: 0.5, y: 0.5 },
     }),
-    c("Text", { content: "Float", size: 14, color: white(), horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+    c("Text", { content: txt.floatLabel, size: 14, color: white(), horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
   ]);
   const floatFieldRow = slot("Float Field", [
-    topRT(16, 328, 16, 36),
+    topRT(16, 204, 16, 36),
   ], [floatInputSlot, floatLabel]);
 
   // ── Integer input row ──────────────────────────────────────────────────────
@@ -390,11 +396,134 @@ export function createStarterTemplate(): Slot {
       offsetMin: { x: 0, y: 0 }, offsetMax: { x: -292, y: 0 },
       pivot: { x: 0.5, y: 0.5 },
     }),
-    c("Text", { content: "Integer", size: 14, color: white(), horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+    c("Text", { content: txt.integerLabel, size: 14, color: white(), horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
   ]);
   const intFieldRow = slot("Integer Field", [
-    topRT(16, 376, 16, 36),
+    topRT(16, 252, 16, 36),
   ], [intInputSlot, intLabel]);
+
+  // ── Tabs element ─────────────────────────────────────────────────────────────
+  // A tabbed container holding the 6 input controls above (re-anchored into
+  // Tab 1) plus two more tabs of fresh controls. Built manually here (rather
+  // than via widgets.buildTabs) so the pages carry real content. Horizontal
+  // orientation = tab strip on top. Only the active page renders; the exporter
+  // lowers this into a shared ValueField<int> + per-page ValueEqualityDriver<int>
+  // → Active, so exactly one page is live at a time (no Z-fighting).
+  const TAB_BAR = 40;      // tab strip height
+  const TAB_OVERLAP = 8;   // content panel tucks under the bar → active tab's
+                           // rounded bottom hides behind the body (folder-tab
+                           // connection; the page is a later sibling so it
+                           // draws over the tab bottoms)
+  const TAB_EDGE = 6;      // content inset from the frame edges (frame = border)
+  const TAB_PAD = 12;      // inner content padding inside a page
+  const tabContent  = rgb(0.16, 0.18, 0.23); // content panel + active tab (shared → they merge)
+  const tabInactive = rgb(0.11, 0.12, 0.15); // recessed inactive tabs
+  const tabFrame    = rgb(0.09, 0.10, 0.13); // outer frame / header backdrop
+
+  function tabButton(idx: number, label: string): Slot {
+    return slot(`Tab ${idx + 1}`, [
+      fillRT(),
+      c("Image", { tint: idx === 0 ? tabContent : tabInactive, preserveAspect: false, spriteUrl: "", cornerRadius: 8 }),
+      c("Button", { normalColor: idx === 0 ? tabContent : tabInactive, highlightColor: rgb(0.22, 0.25, 0.32), pressColor: rgb(0.10, 0.11, 0.14), disabledColor: rgb(0.3, 0.3, 0.3), hoverVibrate: false }),
+      c("TabButton", {}),
+      c("LayoutElement", { minWidth: -1, minHeight: -1, preferredWidth: -1, preferredHeight: -1, flexibleWidth: 1, flexibleHeight: 1, orderOffset: idx }),
+    ], [
+      slot("Label", [
+        fillRT(),
+        c("Text", { content: label, size: 14, color: white(), horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false }),
+      ]),
+    ]);
+  }
+  // The content panel: sides/bottom inset by TAB_EDGE; top extends UP into the
+  // bar by TAB_OVERLAP so the active tab tucks behind it (no gap/notch).
+  function tabPage(idx: number, children: Slot[]): Slot {
+    return slot(`Page ${idx + 1}`, [
+      c("RectTransform", {
+        anchorMin: { x: 0, y: 0 }, anchorMax: { x: 1, y: 1 },
+        offsetMin: { x: TAB_EDGE, y: TAB_EDGE }, offsetMax: { x: -TAB_EDGE, y: -(TAB_BAR - TAB_OVERLAP) },
+        pivot: { x: 0.5, y: 0.5 },
+      }),
+      c("Image", { tint: tabContent, preserveAspect: false, spriteUrl: "", cornerRadius: 8 }),
+      c("TabPage", {}),
+    ], children);
+  }
+  // Page-relative control-row builders (absolute topRT inside the page).
+  function pgSlider(name: string, label: string, value: number, top: number): Slot {
+    const track = slot("Track", [
+      c("RectTransform", { anchorMin: { x: 1, y: 0.5 }, anchorMax: { x: 1, y: 0.5 }, offsetMin: { x: -200, y: -8 }, offsetMax: { x: 0, y: 8 }, pivot: { x: 0.5, y: 0.5 } }),
+      c("Image", { tint: rgb(0.129, 0.149, 0.149), preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+      c("Slider", { value, min: 0, max: 1, direction: "Horizontal", integers: false, power: 1, fillColor: rgb(0.18, 0.36, 0.6), clamp: true, requireInitialPress: true }),
+    ]);
+    return slot(name, [topRT(16, top, 16, 36)], [track, leftLabel(label, 212)]);
+  }
+  function pgProgress(name: string, label: string, value: number, top: number): Slot {
+    const track = slot("Track", [
+      c("RectTransform", { anchorMin: { x: 1, y: 0.5 }, anchorMax: { x: 1, y: 0.5 }, offsetMin: { x: -200, y: -6 }, offsetMax: { x: 0, y: 6 }, pivot: { x: 0.5, y: 0.5 } }),
+      c("Image", { tint: rgb(0.129, 0.149, 0.149), preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+      c("ProgressBar", { value, min: 0, max: 1, direction: "Horizontal", fillColor: rgb(0.18, 0.36, 0.6) }),
+    ]);
+    return slot(name, [topRT(16, top, 16, 36)], [track, leftLabel(label, 212)]);
+  }
+  function pgDropdown(name: string, label: string, options: string, initialIndex: number, top: number): Slot {
+    const trigger = slot("Trigger", [
+      c("RectTransform", { anchorMin: { x: 1, y: 0.5 }, anchorMax: { x: 1, y: 0.5 }, offsetMin: { x: -200, y: -16 }, offsetMax: { x: 0, y: 16 }, pivot: { x: 0.5, y: 0.5 } }),
+      c("Image", { tint: rgb(0.14, 0.16, 0.20), preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+      c("Button", { normalColor: rgb(0.14, 0.16, 0.20), highlightColor: rgb(0.22, 0.26, 0.32), pressColor: rgb(0.10, 0.12, 0.16), disabledColor: rgb(0.3, 0.3, 0.3), hoverVibrate: false }),
+      c("Dropdown", { options, initialIndex, optionFillColor: rgb(0.14, 0.16, 0.20), optionLabelColor: white() }),
+    ]);
+    return slot(name, [topRT(16, top, 16, 36)], [trigger, leftLabel(label, 212)]);
+  }
+  function pgToggle(name: string, label: string, top: number, initial: boolean): Slot {
+    const knob = slot("Knob", [
+      c("RectTransform", { anchorMin: { x: 0.5, y: 0.5 }, anchorMax: { x: 0.5, y: 0.5 }, offsetMin: { x: -27, y: -13 }, offsetMax: { x: -1, y: 13 }, pivot: { x: 0.5, y: 0.5 } }),
+      c("Image", { tint: rgb(0.95, 0.95, 0.95), preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+      c("Knob", { offOffsetMin: { x: -27, y: -13 }, offOffsetMax: { x: -1, y: 13 }, onOffsetMin: { x: 1, y: -13 }, onOffsetMax: { x: 27, y: 13 } }),
+    ]);
+    const pill = slot("Pill", [
+      c("RectTransform", { anchorMin: { x: 1, y: 0.5 }, anchorMax: { x: 1, y: 0.5 }, offsetMin: { x: -60, y: -16 }, offsetMax: { x: 0, y: 16 }, pivot: { x: 0.5, y: 0.5 } }),
+      c("Image", { tint: rgb(0.141, 0.141, 0.141), preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+      c("Button", { normalColor: white(), highlightColor: white(), pressColor: rgb(0.8, 0.8, 0.8), disabledColor: rgb(0.5, 0.5, 0.5), hoverVibrate: false }),
+      c("Toggle", { initialState: initial, offColor: rgb(0.141, 0.141, 0.141), onColor: rgb(0.18, 0.36, 0.60) }),
+    ], [knob]);
+    return slot(name, [topRT(16, top, 16, 36)], [pill, leftLabel(label, 72)]);
+  }
+
+  const tabBar = slot("Tab Bar", [
+    c("RectTransform", {
+      anchorMin: { x: 0, y: 1 }, anchorMax: { x: 1, y: 1 },
+      offsetMin: { x: 0, y: -TAB_BAR }, offsetMax: { x: 0, y: 0 },
+      pivot: { x: 0.5, y: 0.5 },
+    }),
+    c("HorizontalLayout", { spacing: 3, paddingLeft: 6, paddingRight: 6, paddingTop: 5, paddingBottom: 0, horizontalAlign: "Center", verticalAlign: "Top", forceExpandWidth: true, forceExpandHeight: true }),
+  ], [tabButton(0, txt.tabInputs), tabButton(1, txt.tabDisplay), tabButton(2, txt.tabOptions)]);
+
+  // Tab 1 "Inputs": the 6 controls moved from the panel body.
+  const tabPage1 = tabPage(0, [checkboxRow, toggleRow, sliderRow, textFieldRow, floatFieldRow, intFieldRow]);
+  // Tab 2 "Display": fresh sliders + a progress bar.
+  const tabPage2 = tabPage(1, [
+    pgSlider("Brightness", txt.brightness, 0.70, 12),
+    pgSlider("Contrast",   txt.contrast,   0.50, 60),
+    pgSlider("Saturation", txt.saturation, 0.60, 108),
+    pgProgress("Upload",   txt.upload,     0.30, 156),
+  ]);
+  // Tab 3 "Options": a dropdown, two toggles, and a progress bar.
+  const tabPage3 = tabPage(2, [
+    pgDropdown("Theme", txt.theme, txt.themeOptions, 0, 12),
+    pgToggle("Notifications", txt.notifications, 60, true),
+    pgToggle("Auto-save", txt.autoSave, 108, false),
+    pgProgress("Battery", txt.battery, 0.85, 156),
+  ]);
+
+  const tabsRow = slot("Tabs", [
+    topRT(16, 136, 16, 380),
+    // Frame: the card the whole tabbed group sits on (drawn behind bar + pages).
+    c("Image", { tint: tabFrame, preserveAspect: false, spriteUrl: "", cornerRadius: 12 }),
+    c("Tabs", {
+      orientation: "Horizontal", activeTab: 0,
+      tabBarSize: TAB_BAR, tabSpacing: 3, pagePadding: TAB_PAD,
+      activeColor: tabContent, inactiveColor: tabInactive, pageColor: tabContent, frameColor: tabFrame, labelColor: white(),
+    }),
+  ], [tabBar, tabPage1, tabPage2, tabPage3]);
 
   // ── Radio group row ────────────────────────────────────────────────────────
   // Three mutually-exclusive options. Each radio slot has its own Image
@@ -450,7 +579,7 @@ export function createStarterTemplate(): Slot {
       offsetMin: { x: 0, y: 0 }, offsetMax: { x: -252, y: 0 },
       pivot: { x: 0.5, y: 0.5 },
     }),
-    c("Text", { content: "Mode", size: 14, color: white(), horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+    c("Text", { content: txt.mode, size: 14, color: white(), horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
   ]);
   // Three options stacked against the right edge of the row. rightPx is the
   // gap from the row's right edge; widths and gaps stay the same as before
@@ -472,12 +601,12 @@ export function createStarterTemplate(): Slot {
       pivot: { x: 0.5, y: 0.5 },
     }),
   ], [
-    makeRadioOption("Auto", "Auto", 160, 90, 0, true),
-    makeRadioOption("On",   "On",   80,  72, 1, false),
-    makeRadioOption("Off",  "Off",  0,   72, 2, false),
+    makeRadioOption("Auto", txt.auto, 160, 90, 0, true),
+    makeRadioOption("On",   txt.on,   80,  72, 1, false),
+    makeRadioOption("Off",  txt.off,  0,   72, 2, false),
   ]);
   const radioGroupRow = slot("Radio Group", [
-    topRT(16, 424, 16, 36),
+    topRT(16, 528, 16, 36),
     // RadioGroup marker — puts the shared ValueField<int> on this parent
     // slot at export. Initial index 0 → "Auto" starts selected.
     c("RadioGroup", { groupId: "mode", initialIndex: 0 }),
@@ -513,10 +642,10 @@ export function createStarterTemplate(): Slot {
       offsetMin: { x: 0, y: 0 }, offsetMax: { x: -212, y: 0 },
       pivot: { x: 0.5, y: 0.5 },
     }),
-    c("Text", { content: "Progress", size: 14, color: white(), horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+    c("Text", { content: txt.progress, size: 14, color: white(), horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
   ]);
   const progressBarRow = slot("Progress Bar", [
-    topRT(16, 472, 16, 36),
+    topRT(16, 576, 16, 36),
   ], [progressBarTrack, progressBarLabel]);
 
   // ── Dropdown row ───────────────────────────────────────────────────────────
@@ -534,7 +663,7 @@ export function createStarterTemplate(): Slot {
     c("Image", { tint: rgb(0.14, 0.16, 0.20), preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
     c("Button", { normalColor: rgb(0.14, 0.16, 0.20), highlightColor: rgb(0.22, 0.26, 0.32), pressColor: rgb(0.10, 0.12, 0.16), disabledColor: rgb(0.3, 0.3, 0.3), hoverVibrate: false }),
     c("Dropdown", {
-      options: "Low\nMedium\nHigh",
+      options: txt.qualityOptions,
       initialIndex: 1,
       optionFillColor:  rgb(0.14, 0.16, 0.20),
       optionLabelColor: white(),
@@ -546,10 +675,10 @@ export function createStarterTemplate(): Slot {
       offsetMin: { x: 0, y: 0 }, offsetMax: { x: -212, y: 0 },
       pivot: { x: 0.5, y: 0.5 },
     }),
-    c("Text", { content: "Quality", size: 14, color: white(), horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+    c("Text", { content: txt.quality, size: 14, color: white(), horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
   ]);
   const dropdownRow = slot("Dropdown", [
-    topRT(16, 520, 16, 36),
+    topRT(16, 624, 16, 36),
   ], [dropdownTrigger, dropdownLabel]);
 
   // ── Reference Field row ────────────────────────────────────────────────────
@@ -575,10 +704,10 @@ export function createStarterTemplate(): Slot {
       offsetMin: { x: 0, y: 0 }, offsetMax: { x: -292, y: 0 },
       pivot: { x: 0.5, y: 0.5 },
     }),
-    c("Text", { content: "Reference", size: 14, color: white(), horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+    c("Text", { content: txt.reference, size: 14, color: white(), horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
   ]);
   const refFieldRow = slot("Reference Field", [
-    topRT(16, 568, 16, 36),
+    topRT(16, 672, 16, 36),
   ], [refFieldControl, refFieldLabel]);
 
   // ── Color Picker row ───────────────────────────────────────────────────────
@@ -604,10 +733,10 @@ export function createStarterTemplate(): Slot {
       offsetMin: { x: 0, y: 0 }, offsetMax: { x: -112, y: 0 },
       pivot: { x: 0.5, y: 0.5 },
     }),
-    c("Text", { content: "Color Picker", size: 14, color: white(), horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+    c("Text", { content: txt.colorPicker, size: 14, color: white(), horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
   ]);
   const colorPickerRow = slot("Color Picker", [
-    topRT(16, 616, 16, 36),
+    topRT(16, 720, 16, 36),
   ], [colorPickerSwatch, colorPickerLabel]);
 
   // ── Scroll Area row ────────────────────────────────────────────────────────
@@ -689,7 +818,7 @@ export function createStarterTemplate(): Slot {
   }
 
   // 1) Volume slider
-  const scrollVolumeRow = scrollSliderRow_("Volume",     "Volume",     0.30, 0);
+  const scrollVolumeRow = scrollSliderRow_("Volume",     txt.volume,   0.30, 0);
   // 2) Text input
   const scrollTextInput = slot("Input", [
     c("RectTransform", {
@@ -699,14 +828,14 @@ export function createStarterTemplate(): Slot {
     }),
     c("Image", { tint: rgb(0.12, 0.12, 0.12), preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
     c("TextField", {
-      placeholder: "", textContent: "Edit me",
+      placeholder: "", textContent: txt.editMe,
       textAlign: "Center",
       fontSize: 16, textColor: rgb(0.9, 0.9, 0.9),
       placeholderColor: rgb(0.45, 0.45, 0.45),
       backgroundTint: rgb(0.12, 0.12, 0.12),
     }),
   ]);
-  const scrollTextRow = scrollRow_("Text Field", 36, [], [scrollTextInput, leftLabel("Text", 292)], 1);
+  const scrollTextRow = scrollRow_("Text Field", 36, [], [scrollTextInput, leftLabel(txt.textLabel, 292)], 1);
 
   // 3) Mode radio group — unique groupId
   function makeScrollRadioOption(
@@ -751,27 +880,27 @@ export function createStarterTemplate(): Slot {
       pivot: { x: 0.5, y: 0.5 },
     }),
   ], [
-    makeScrollRadioOption("Auto", "Auto", 160, 90, 0, true),
-    makeScrollRadioOption("On", "On", 80, 72, 1, false),
-    makeScrollRadioOption("Off", "Off", 0, 72, 2, false),
+    makeScrollRadioOption("Auto", txt.auto, 160, 90, 0, true),
+    makeScrollRadioOption("On", txt.on, 80, 72, 1, false),
+    makeScrollRadioOption("Off", txt.off, 0, 72, 2, false),
   ]);
   const scrollModeRow = scrollRow_(
     "Mode", 36,
     [c("RadioGroup", { groupId: "scroll-mode", initialIndex: 0 })],
-    [leftLabel("Mode", 252), scrollRadials],
+    [leftLabel(txt.mode, 252), scrollRadials],
     2,
   );
 
   // 4–11) More rows so the viewport has meaningful content to scroll through.
-  const scrollDropdownRow  = scrollDropdownRow_("Dropdown",   "Quality",    "Low\nMedium\nHigh",            1,  3);
-  const scrollBrightRow    = scrollSliderRow_  ("Brightness",  "Brightness", 0.70,                           4);
-  const scrollContrastRow  = scrollSliderRow_  ("Contrast",    "Contrast",   0.50,                           5);
-  const scrollSatRow       = scrollSliderRow_  ("Saturation",  "Saturation", 0.60,                           6);
-  const scrollGammaRow     = scrollSliderRow_  ("Gamma",       "Gamma",      0.45,                           7);
-  const scrollUploadRow    = scrollProgressRow_("Upload",      "Upload",     0.30,                           8);
-  const scrollDownloadRow  = scrollProgressRow_("Download",    "Download",   0.75,                           9);
-  const scrollResRow       = scrollDropdownRow_("Resolution",  "Resolution", "720p\n1080p\n1440p\n4K",       1, 10);
-  const scrollFormatRow    = scrollDropdownRow_("Format",      "Format",     "PNG\nJPEG\nWebP\nEXR",         0, 11);
+  const scrollDropdownRow  = scrollDropdownRow_("Dropdown",   txt.quality,    txt.qualityOptions,           1,  3);
+  const scrollBrightRow    = scrollSliderRow_  ("Brightness",  txt.brightness, 0.70,                          4);
+  const scrollContrastRow  = scrollSliderRow_  ("Contrast",    txt.contrast,   0.50,                          5);
+  const scrollSatRow       = scrollSliderRow_  ("Saturation",  txt.saturation, 0.60,                          6);
+  const scrollGammaRow     = scrollSliderRow_  ("Gamma",       txt.gamma,      0.45,                          7);
+  const scrollUploadRow    = scrollProgressRow_("Upload",      txt.upload,     0.30,                          8);
+  const scrollDownloadRow  = scrollProgressRow_("Download",    txt.download,   0.75,                          9);
+  const scrollResRow       = scrollDropdownRow_("Resolution",  txt.resolution, "720p\n1080p\n1440p\n4K",      1, 10);
+  const scrollFormatRow    = scrollDropdownRow_("Format",      txt.format,     "PNG\nJPEG\nWebP\nEXR",        0, 11);
 
   const scrollHeaderLabel = slot("Label", [
     c("RectTransform", {
@@ -779,7 +908,7 @@ export function createStarterTemplate(): Slot {
       offsetMin: { x: 0, y: -20 }, offsetMax: { x: 0, y: 0 },
       pivot: { x: 0.5, y: 0.5 },
     }),
-    c("Text", { content: "Scroll Area", size: 14, color: white(), horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+    c("Text", { content: txt.scrollArea, size: 14, color: white(), horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
   ]);
   const scrollAreaSlot = slot("Scroll Viewport", [
     c("RectTransform", {
@@ -797,26 +926,26 @@ export function createStarterTemplate(): Slot {
     }),
   ], [scrollVolumeRow, scrollTextRow, scrollModeRow, scrollDropdownRow, scrollBrightRow, scrollContrastRow, scrollSatRow, scrollGammaRow, scrollUploadRow, scrollDownloadRow, scrollResRow, scrollFormatRow]);
   const scrollRow = slot("Scroll Area", [
-    topRT(16, 668, 16, 250),
+    topRT(16, 772, 16, 250),
   ], [scrollHeaderLabel, scrollAreaSlot]);
 
   // ── Image placeholder ──────────────────────────────────────────────────────
   // Fixed 16:9 rect: canvas width=800 → usable width=768px → height=432px.
-  // Positioned 16px below the scroll area (ends at 918) → topMargin=934.
-  // Canvas height bumped to 1448 to fit the taller image + buttons below.
+  // Positioned 16px below the scroll area (now ends at 1022) → topMargin=1038.
+  // Canvas height bumped to 1552 to fit the Tabs block + taller image + buttons.
   const imagePlaceholderSlot = slot("Image Placeholder", [
-    topRT(16, 934, 16, 432),
+    topRT(16, 1038, 16, 432),
     c("Image", { tint: white(), preserveAspect: false, spriteUrl: "", useImagePlaceholder: true }),
   ]);
 
   // ── Two buttons at bottom ──────────────────────────────────────────────────
   const btnALabelSlot = slot("Label", [
     fillRT(),
-    c("Text", { content: "Button A", size: 16, color: white(), horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false }),
+    c("Text", { content: txt.buttonA, size: 16, color: white(), horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false }),
   ]);
   const btnBLabelSlot = slot("Label", [
     fillRT(),
-    c("Text", { content: "Button B", size: 16, color: white(), horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false }),
+    c("Text", { content: txt.buttonB, size: 16, color: white(), horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false }),
   ]);
 
   const btnA = slot("Button A", [
@@ -846,18 +975,15 @@ export function createStarterTemplate(): Slot {
 
   // ── Root canvas ────────────────────────────────────────────────────────────
   return slot("Canvas", [
-    c("Canvas", { sizeX: 800, sizeY: 1448, pixelScale: 0.0005, acceptPhysicalTouch: true, backgroundColor: { r: 0.051, g: 0.051, b: 0.051, a: 1 }, rounded: true, backLogoHyperlinkUrl: "https://uix.dalek.coffee", backLogoHyperlinkReason: "Check out the tool! :D" }),
+    c("Canvas", { sizeX: 800, sizeY: 1552, pixelScale: 0.0005, acceptPhysicalTouch: true, backgroundColor: { r: 0.051, g: 0.051, b: 0.051, a: 1 }, rounded: true, backLogoHyperlinkUrl: "https://uix.dalek.coffee", backLogoHyperlinkReason: "Check out the tool! :D" }),
     fillRT(),
   ], [
     backgroundSlot,
     headerSlot,
     bodyTextSlot,
-    checkboxRow,
-    toggleRow,
-    sliderRow,
-    textFieldRow,
-    floatFieldRow,
-    intFieldRow,
+    // Tabs block (holds the 6 input controls in Tab 1 + two more tabs). The
+    // checkbox/toggle/slider/text/float/int rows now live inside tabPage1.
+    tabsRow,
     radioGroupRow,
     progressBarRow,
     dropdownRow,

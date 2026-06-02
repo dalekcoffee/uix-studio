@@ -35,6 +35,25 @@ export const UIX_COMPONENT_TYPES = [
   "Close",
   "ReferenceField",
   "ScrollArea",
+  // Tabs: a container that holds N labelled pages, exactly one visible at a
+  // time. The marker sits on the host slot and carries the orientation + sizing
+  // config. Its children are a "Tab Bar" (a Horizontal/Vertical layout of
+  // TabButton slots) followed by N TabPage slots. At export the host gets a
+  // shared ValueField<int> (the selected index); each TabButton writes its
+  // positional index to it (ButtonValueSet<int>) and each TabPage's Active is
+  // driven by a ValueEqualityDriver<int> comparing the shared field to the
+  // page's positional index — so only the selected page renders (no Z-fighting,
+  // same hide mechanism as popups). Index is POSITIONAL (array order), never
+  // stored, so reordering tabs needs no field resync.
+  "Tabs",
+  // Marks a button slot inside a Tabs bar. Empty — its tab index is its
+  // position among the Tab Bar's children.
+  "TabButton",
+  // Marks a page container slot inside a Tabs host. Empty — its index is its
+  // position among the host's TabPage children. Absolute container (no layout
+  // component) so its children get full side-by-side snap dragging, like
+  // PopupContent.
+  "TabPage",
   // Editor-only layout aid: an empty, invisible row that reserves vertical
   // space. Exports as a plain empty slot (the marker itself is skipped).
   "Spacer",
@@ -73,6 +92,15 @@ export interface Slot {
    * actually faces the rear viewer (instead of showing as mirrored text).
    */
   rotation?: { x: number; y: number; z: number; w: number };
+  /**
+   * For a labelled composite control (Slider, Toggle, Text Field, …), where its
+   * "Label" child sits relative to the control. `undefined` ≡ "left" (the label
+   * hugs the control's left, the classic layout). "top" stacks the label above
+   * the control. Only meaningful on the composite WRAPPER slot; ignored
+   * everywhere else. The BSON exporter reads geometry only, so this never
+   * serializes to Resonite — it just drives the editor's internal layout.
+   */
+  labelPosition?: "left" | "top";
   /**
    * Optional local scale. Defaults to [1, 1, 1] for non-canvas slots and
    * [0.001, 0.001, 0.001] for the canvas slot. Useful values:

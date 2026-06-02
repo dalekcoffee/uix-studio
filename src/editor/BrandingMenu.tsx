@@ -3,6 +3,7 @@ import { useStore } from "../state/store";
 import { addImageFile } from "../io/imageStore";
 import { useCustomImageUrl } from "./useCustomImageUrl";
 import { useDialog } from "./useDialog";
+import { useT } from "../locale/useT";
 
 // Branding menu — owns the panel's back-side identity:
 //   • Logo image (overrides the default UIX Studio logo on the rear of the panel)
@@ -20,6 +21,7 @@ export default function BrandingMenu({ onClose }: { onClose: () => void }) {
   // Resolve the custom logo hash to a blob URL for preview (re-resolves on
   // upload via the image-store subscription inside the hook).
   const dialog = useDialog();
+  const t = useT();
   const imageUrl = useCustomImageUrl(theme.backLogoImageHash);
   // Transient "Saved!" state for the Apply button. Clicking apply flips this
   // to true; a setTimeout reverts after ~1.4s so the button visibly confirms
@@ -40,7 +42,7 @@ export default function BrandingMenu({ onClose }: { onClose: () => void }) {
       const stored = await addImageFile(file);
       setTheme({ backLogoImageHash: stored.hash });
     } catch (err) {
-      await dialog.alert(`Failed to upload image: ${(err as Error).message}`);
+      await dialog.alert(t.branding.uploadFailed((err as Error).message));
     }
   }
 
@@ -53,23 +55,23 @@ export default function BrandingMenu({ onClose }: { onClose: () => void }) {
       className="w-[340px] max-h-[80vh] overflow-y-auto rounded-lg border border-slate-700 bg-slate-900 p-3 text-xs text-slate-200 shadow-2xl"
     >
       <div className="mb-2 flex items-center justify-between">
-        <span className="text-sm font-semibold text-slate-100">Branding</span>
+        <span className="text-sm font-semibold text-slate-100">{t.branding.title}</span>
         <button
           onClick={onClose}
           className="text-slate-400 hover:text-slate-200"
-          title="Close"
+          title={t.branding.close}
         >
           ✕
         </button>
       </div>
 
-      <Section title="Back Logo Image">
+      <Section title={t.branding.backLogoImage}>
         <div className="flex items-start gap-3">
           <div className="h-20 w-20 shrink-0 overflow-hidden rounded border border-slate-700 bg-checker flex items-center justify-center">
             {imageUrl ? (
               <img
                 src={imageUrl}
-                alt="Back logo"
+                alt={t.branding.backLogoAlt}
                 className="h-full w-full object-contain"
                 draggable={false}
               />
@@ -80,7 +82,7 @@ export default function BrandingMenu({ onClose }: { onClose: () => void }) {
               // sprite (same SHA-256), so this preview matches reality.
               <img
                 src="./UIX%20Studio.png"
-                alt="UIX Studio (default back logo)"
+                alt={t.branding.defaultLogoAlt}
                 className="h-full w-full object-contain"
                 draggable={false}
               />
@@ -98,42 +100,42 @@ export default function BrandingMenu({ onClose }: { onClose: () => void }) {
               onClick={() => fileInputRef.current?.click()}
               className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-slate-100 transition hover:border-sky-500/60 hover:bg-slate-700"
             >
-              Upload image…
+              {t.branding.uploadImage}
             </button>
             {theme.backLogoImageHash && (
               <button
                 onClick={clearLogoImage}
                 className="rounded border border-slate-700 bg-slate-800/60 px-2 py-1 text-slate-400 transition hover:text-rose-300"
               >
-                Reset to default
+                {t.branding.resetDefault}
               </button>
             )}
             <p className="text-[10px] text-slate-500">
-              Replaces the UIX Studio logo on the rear of the panel. PNG / JPG / WebP.
+              {t.branding.replacesLogo}
             </p>
           </div>
         </div>
       </Section>
 
-      <Section title="Click Hyperlink">
-        <label className="block text-[10px] text-slate-400">URL</label>
+      <Section title={t.branding.clickHyperlink}>
+        <label className="block text-[10px] text-slate-400">{t.branding.url}</label>
         <input
           type="text"
           value={theme.backLogoUrl}
           onChange={(e) => setTheme({ backLogoUrl: e.target.value })}
-          placeholder="https://…"
+          placeholder={t.branding.urlPlaceholder}
           className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-slate-100 placeholder-slate-500"
         />
-        <label className="mt-1.5 block text-[10px] text-slate-400">Reason</label>
+        <label className="mt-1.5 block text-[10px] text-slate-400">{t.branding.reason}</label>
         <input
           type="text"
           value={theme.backLogoReason}
           onChange={(e) => setTheme({ backLogoReason: e.target.value })}
-          placeholder="Confirmation dialog text…"
+          placeholder={t.branding.reasonPlaceholder}
           className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-slate-100 placeholder-slate-500"
         />
         <p className="mt-1.5 text-[10px] text-slate-500">
-          Shown in Resonite's confirmation dialog when a user clicks the rear logo.
+          {t.branding.reasonHint}
         </p>
       </Section>
 
@@ -150,9 +152,9 @@ export default function BrandingMenu({ onClose }: { onClose: () => void }) {
               ? "border-emerald-500 bg-emerald-600"
               : "border-sky-500 bg-sky-600 transition hover:bg-sky-500"
           }`}
-          title="Push image, URL, and reason to the Canvas component"
+          title={t.branding.applyTip}
         >
-          {justSaved ? "✓ Saved!" : "Apply Branding"}
+          {justSaved ? t.branding.saved : t.branding.apply}
         </button>
       </div>
     </div>

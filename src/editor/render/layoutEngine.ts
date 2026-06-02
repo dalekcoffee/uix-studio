@@ -1,5 +1,6 @@
 import type { Slot, UixComponentType } from "../../model/types";
 import type { Rect } from "./rectTransform";
+import { DEFAULT_CONTENT_PADDING, SCROLLBAR_GUTTER, resolvePad } from "../../model/padding";
 
 export type LayoutKind = "Vertical" | "Horizontal" | "Grid" | null;
 
@@ -103,12 +104,23 @@ function alignOffset(
 // component in the editor doc — only the marker. At export time the marker
 // expands to a real layout container; here we synthesize equivalent props so
 // the editor preview stacks children the same way.
-function scrollAreaAsLayoutProps(slot: Slot, axis: "Vertical" | "Horizontal"): any {
+function scrollAreaAsLayoutProps(
+  slot: Slot,
+  axis: "Vertical" | "Horizontal",
+  canvasPad: number,
+): any {
   const sa = slot.components.find((c) => c.type === "ScrollArea");
   const p = (sa?.props ?? {}) as Record<string, unknown>;
-  const pad = (p.padding as number) ?? 8;
+  const pad = resolvePad(p.padding as number | undefined, canvasPad);
+  // Reserve the scrollbar gutter on the scroll-axis side, matching the exporter
+  // (exportBrson gutterRight/gutterBottom) so editor content insets identically.
+  const showSb = (p.showScrollbar as boolean) ?? true;
+  const gutter = showSb ? SCROLLBAR_GUTTER : 0;
   return {
-    paddingTop: pad, paddingBottom: pad, paddingLeft: pad, paddingRight: pad,
+    paddingTop: pad,
+    paddingBottom: pad + (axis === "Horizontal" ? gutter : 0),
+    paddingLeft: pad,
+    paddingRight: pad + (axis === "Vertical" ? gutter : 0),
     spacing: (p.spacing as number) ?? 4,
     horizontalAlign: "Left",
     verticalAlign:   "Top",
@@ -117,7 +129,12 @@ function scrollAreaAsLayoutProps(slot: Slot, axis: "Vertical" | "Horizontal"): a
   };
 }
 
-export function layoutChildren(parent: Rect, slot: Slot, kind: LayoutKind): Rect[] | null {
+export function layoutChildren(
+  parent: Rect,
+  slot: Slot,
+  kind: LayoutKind,
+  canvasPad: number = DEFAULT_CONTENT_PADDING,
+): Rect[] | null {
   if (!kind) return null;
   if (slot.children.length === 0) return [];
 
@@ -130,16 +147,23 @@ export function layoutChildren(parent: Rect, slot: Slot, kind: LayoutKind): Rect
   const childIndex = new Map(slot.children.map((c, i) => [c.id, i]));
   const isScrollArea = slot.components.some((c) => c.type === "ScrollArea");
 
+  // Padding: ScrollArea props come pre-resolved (concrete >= 0) from
+  // scrollAreaAsLayoutProps; raw layout props may carry the -1 "auto" sentinel
+  // that inherits half the canvas padding (resolvePad is a no-op on >= 0).
   if (kind === "Vertical") {
     const p = isScrollArea
-      ? scrollAreaAsLayoutProps(slot, "Vertical")
+      ? scrollAreaAsLayoutProps(slot, "Vertical", canvasPad)
       : (getProps(slot, "VerticalLayout") as any);
-    const innerW = parent.w - (p.paddingLeft + p.paddingRight);
+    const padL = resolvePad(p.paddingLeft, canvasPad);
+    const padR = resolvePad(p.paddingRight, canvasPad);
+    const padT = resolvePad(p.paddingTop, canvasPad);
+    const padB = resolvePad(p.paddingBottom, canvasPad);
+    const innerW = parent.w - (padL + padR);
     // For ScrollArea, leave the scroll axis unbounded so distribute() never
     // squishes children — the preview renders them in a real scrollable div.
     const innerH = isScrollArea
       ? 99999
-      : parent.h - (p.paddingTop + p.paddingBottom);
+      : parent.h - (padT + padB);
     const totalSpacing = p.spacing * Math.max(0, sorted.length - 1);
     const heights = distribute(
       sorted.map((c) => preferredSize(getLayoutElement(c), "h")),
@@ -148,13 +172,13 @@ export function layoutChildren(parent: Rect, slot: Slot, kind: LayoutKind): Rect
       !!p.forceExpandHeight,
     );
     const usedHeight = heights.reduce((a, b) => a + b, 0) + totalSpacing;
-    let y = p.paddingTop + alignOffset(innerH, usedHeight, p.verticalAlign);
+    let y = padT + alignOffset(innerH, usedHeight, p.verticalAlign);
     const result: Rect[] = new Array(slot.children.length);
     sorted.forEach((child, i) => {
       const h = heights[i];
       const le = getLayoutElement(child);
       const w = p.forceExpandWidth ? innerW : preferredSize(le, "w");
-      const x = p.paddingLeft + alignOffset(innerW, w, p.horizontalAlign);
+      const x = padL + alignOffset(innerW, w, p.horizontalAlign);
       const idx = childIndex.get(child.id)!;
       result[idx] = { x, y, w, h };
       y += h + p.spacing;
@@ -164,13 +188,17 @@ export function layoutChildren(parent: Rect, slot: Slot, kind: LayoutKind): Rect
 
   if (kind === "Horizontal") {
     const p = isScrollArea
-      ? scrollAreaAsLayoutProps(slot, "Horizontal")
+      ? scrollAreaAsLayoutProps(slot, "Horizontal", canvasPad)
       : (getProps(slot, "HorizontalLayout") as any);
+    const padL = resolvePad(p.paddingLeft, canvasPad);
+    const padR = resolvePad(p.paddingRight, canvasPad);
+    const padT = resolvePad(p.paddingTop, canvasPad);
+    const padB = resolvePad(p.paddingBottom, canvasPad);
     // For ScrollArea, leave the scroll axis unbounded — same reasoning as Vertical above.
     const innerW = isScrollArea
       ? 99999
-      : parent.w - (p.paddingLeft + p.paddingRight);
-    const innerH = parent.h - (p.paddingTop + p.paddingBottom);
+      : parent.w - (padL + padR);
+    const innerH = parent.h - (padT + padB);
     const totalSpacing = p.spacing * Math.max(0, sorted.length - 1);
     const widths = distribute(
       sorted.map((c) => preferredSize(getLayoutElement(c), "w")),
@@ -179,13 +207,13 @@ export function layoutChildren(parent: Rect, slot: Slot, kind: LayoutKind): Rect
       !!p.forceExpandWidth,
     );
     const usedWidth = widths.reduce((a, b) => a + b, 0) + totalSpacing;
-    let x = p.paddingLeft + alignOffset(innerW, usedWidth, p.horizontalAlign);
+    let x = padL + alignOffset(innerW, usedWidth, p.horizontalAlign);
     const result: Rect[] = new Array(slot.children.length);
     sorted.forEach((child, i) => {
       const w = widths[i];
       const le = getLayoutElement(child);
       const h = p.forceExpandHeight ? innerH : preferredSize(le, "h");
-      const y = p.paddingTop + alignOffset(innerH, h, p.verticalAlign);
+      const y = padT + alignOffset(innerH, h, p.verticalAlign);
       const idx = childIndex.get(child.id)!;
       result[idx] = { x, y, w, h };
       x += w + p.spacing;
@@ -195,8 +223,12 @@ export function layoutChildren(parent: Rect, slot: Slot, kind: LayoutKind): Rect
 
   if (kind === "Grid") {
     const p = getProps(slot, "GridLayout") as any;
-    const innerW = parent.w - (p.paddingLeft + p.paddingRight);
-    const innerH = parent.h - (p.paddingTop + p.paddingBottom);
+    const padL = resolvePad(p.paddingLeft, canvasPad);
+    const padR = resolvePad(p.paddingRight, canvasPad);
+    const padT = resolvePad(p.paddingTop, canvasPad);
+    const padB = resolvePad(p.paddingBottom, canvasPad);
+    const innerW = parent.w - (padL + padR);
+    const innerH = parent.h - (padT + padB);
     const cellsPerRow = Math.max(
       1,
       Math.floor((innerW + p.spacingX) / (p.cellSizeX + p.spacingX)),
@@ -204,8 +236,8 @@ export function layoutChildren(parent: Rect, slot: Slot, kind: LayoutKind): Rect
     const rows = Math.ceil(sorted.length / cellsPerRow);
     const usedW = cellsPerRow * p.cellSizeX + (cellsPerRow - 1) * p.spacingX;
     const usedH = rows * p.cellSizeY + (rows - 1) * p.spacingY;
-    const startX = p.paddingLeft + alignOffset(innerW, usedW, p.horizontalAlign);
-    const startY = p.paddingTop + alignOffset(innerH, usedH, p.verticalAlign);
+    const startX = padL + alignOffset(innerW, usedW, p.horizontalAlign);
+    const startY = padT + alignOffset(innerH, usedH, p.verticalAlign);
     const result: Rect[] = new Array(slot.children.length);
     sorted.forEach((child, i) => {
       const col = i % cellsPerRow;

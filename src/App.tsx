@@ -4,6 +4,8 @@ import Editor from "./editor/Editor";
 import { useStore } from "./state/store";
 import { readAutosave, writeAutosave, clearAutosave } from "./io/autosave";
 import { DialogProvider } from "./editor/useDialog";
+import { useT } from "./locale/useT";
+import type { Dictionary } from "./locale";
 import type { UixDocument } from "./model/types";
 
 // Debounce window for autosave writes — long enough that a flurry of edits
@@ -101,7 +103,8 @@ function RestoreBanner({
   onRestore: () => void;
   onDismiss: () => void;
 }) {
-  const when = useRef(savedAt ? formatWhen(savedAt) : "").current;
+  const t = useT();
+  const when = useRef(savedAt ? formatWhen(savedAt, t) : "").current;
   return (
     <div className="pointer-events-none absolute inset-x-0 top-12 z-[200] flex justify-center px-4">
       <div className="pointer-events-auto flex max-w-xl items-center gap-3 rounded-lg border border-sky-500/60 bg-slate-900/95 px-4 py-2.5 text-xs text-slate-200 shadow-2xl">
@@ -109,23 +112,23 @@ function RestoreBanner({
           ⟳
         </span>
         <div className="flex-1 leading-snug">
-          <div className="font-semibold text-slate-100">Restore your last session?</div>
+          <div className="font-semibold text-slate-100">{t.app.restoreTitle}</div>
           <div className="text-[11px] text-slate-400">
-            We found unsaved work{when ? ` from ${when}` : ""} saved automatically in this browser.
+            {t.app.restoreBody(when)}
           </div>
         </div>
         <button
           onClick={onRestore}
           className="flex-shrink-0 rounded border border-sky-500 bg-sky-600 px-3 py-1 font-semibold text-white transition hover:bg-sky-500"
         >
-          Restore
+          {t.app.restore}
         </button>
         <button
           onClick={onDismiss}
-          title="Discard the autosaved work and keep the current canvas"
+          title={t.app.discardTip}
           className="flex-shrink-0 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-slate-300 transition hover:border-rose-500 hover:text-rose-300"
         >
-          Discard
+          {t.app.discard}
         </button>
       </div>
     </div>
@@ -133,13 +136,14 @@ function RestoreBanner({
 }
 
 // Human-friendly relative-ish timestamp ("3 minutes ago", "today at 14:02",
-// or a full date) without pulling in a date library.
-function formatWhen(ts: number): string {
+// or a full date) without pulling in a date library. Localized via the passed
+// dictionary; the absolute fallback uses the browser's own locale formatting.
+function formatWhen(ts: number, t: Dictionary): string {
   const diff = Date.now() - ts;
   const min = Math.round(diff / 60000);
-  if (min < 1) return "moments ago";
-  if (min < 60) return `${min} minute${min === 1 ? "" : "s"} ago`;
+  if (min < 1) return t.app.momentsAgo;
+  if (min < 60) return t.app.minutesAgo(min);
   const hr = Math.round(min / 60);
-  if (hr < 24) return `${hr} hour${hr === 1 ? "" : "s"} ago`;
+  if (hr < 24) return t.app.hoursAgo(hr);
   return new Date(ts).toLocaleString();
 }

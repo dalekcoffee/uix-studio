@@ -23,12 +23,20 @@ import {
   type SnapContainer,
   type SnapRow,
 } from "./render/snapFlow";
-import { contentMinWidth } from "./render/contentMin";
+import { contentMinWidth, labeledCompositeFit, compositeResizeMinWidth, containerResizeMin, SNAP_GAP, type CompositeFit } from "./render/contentMin";
+import { DEFAULT_CONTENT_PADDING } from "../model/padding";
 import { dragController } from "./dragController";
 import { DRAG_GLIDE } from "./render/renderSlot";
+import { useDialog } from "./useDialog";
+import { confirmDeleteSlot } from "./deleteConfirm";
+import { useT } from "../locale/useT";
 
 type HandleId = "tl" | "t" | "tr" | "r" | "br" | "b" | "bl" | "l";
 const HANDLES: readonly HandleId[] = ["tl", "t", "tr", "r", "br", "b", "bl", "l"];
+// The root canvas is pinned to origin (0,0): a canvas-resize forces x=y=0, so the
+// top/left handles would resize from the opposite edge and feel inverted. Only
+// the right / bottom / bottom-right handles grow the panel intuitively.
+const CANVAS_HANDLES: readonly HandleId[] = ["r", "br", "b"];
 
 // Fraction of a nested single-column container's width, at each side, that reads
 // as "drop BESIDE it" (resolving to the parent). The middle band drops INSIDE.
@@ -54,6 +62,12 @@ const MIN_SIZE = 12; // minimum slot dimension in canvas-space px
 const NEAR_RAIL = -22; // inner per-row grips
 const FAR_RAIL = -46; // outer "whole nested container" grips
 const RAIL_W = 20;
+// When root elements sit SIDE-BY-SIDE, each element's grabber cluster is pushed
+// this many px further left per sibling to its right — so the left element's
+// grips don't pile onto / blend with the right element's grips on the same rail.
+// Must exceed the widest grip (the ~44px "whole section" bar) so a left member's
+// bar fully clears the right member's, leaving a visible gap between clusters.
+const SIDE_RAIL_TIER = 50;
 // External (editor) scrollbar for scrollable fields — sits just outside the
 // field's right edge so it never collides with the right resize handles.
 const SCROLLBAR_GAP = 6; // px right of the field's right edge
@@ -125,6 +139,20 @@ interface DragState {
   anchorMin: { x: number; y: number };
   anchorMax: { x: number; y: number };
   slotId: string;
+  // For a free-resize of a single-control labeled composite: captured at drag
+  // start so the resize can shrink the control instead of clipping the label.
+  // Null for multi-part composites and everything else.
+  labelFit?: CompositeFit | null;
+  // Minimum width this element may be resized to (labeled composites only — keeps
+  // the label from clipping AND the radials/options from overlapping). Null = no
+  // composite floor (flat MIN_SIZE applies).
+  resizeMinW?: number | null;
+  // For a CONTAINER (ScrollArea / Tabs / layout) resize: the minimum size that
+  // still fits its biggest nested element. Null for non-containers.
+  containerMin?: { minW: number; minH: number } | null;
+  // True when resizing a LAYOUT-managed element (scroll-area row): the resize
+  // writes its LayoutElement preferred size instead of Rect offsets.
+  layoutResize?: boolean;
   // A move/flow drag stays "armed" (not started) until the pointer moves past
   // DRAG_THRESHOLD, so a plain click selects (and shows resize handles) without
   // kicking off a drag. Handle/canvas resizes start immediately.
@@ -146,6 +174,9 @@ interface Grip {
   rect: Rect; // canvas-space span the grip covers
   nested: boolean; // purple when true (a nested container's inner row grip)
   railX: number;
+  // Extra leftward offset (screen px, ≤ 0) applied at render so a side-by-side
+  // member's grips clear the member(s) to its right. 0 for stacked elements.
+  railShift?: number;
 }
 
 // Which popup card (if any) is currently being edited, plus every popup card in
@@ -291,9 +322,16 @@ interface DropIndicator {
 export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
   const root = useStore((s) => s.root);
   const selectedId = useStore((s) => s.selectedSlotId);
+  const t = useT();
+  const lang = useStore((s) => s.language);
+  const editingPopupId = useStore((s) => s.editingPopupId);
   const select = useStore((s) => s.select);
   const dragStart = useStore((s) => s.dragStart);
   const dragApply = useStore((s) => s.dragApply);
+  const refitComposite = useStore((s) => s.refitComposite);
+  const refitContainerComposites = useStore((s) => s.refitContainerComposites);
+  const setLayoutSize = useStore((s) => s.setLayoutSize);
+  const reflowContainerNow = useStore((s) => s.reflowContainerNow);
   const dragCommit = useStore((s) => s.dragCommit);
   const snap = useStore((s) => s.snap);
   const editMode = useStore((s) => s.editMode);
@@ -307,6 +345,7 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
   const setLiveDrag = useStore((s) => s.setLiveDrag);
   const duplicate = useStore((s) => s.duplicate);
   const remove = useStore((s) => s.remove);
+  const dialog = useDialog();
   const toggleSlotLock = useStore((s) => s.toggleSlotLock);
   const openContextMenu = useStore((s) => s.openContextMenu);
   const widenCanvasAndMerge = useStore((s) => s.widenCanvasAndMerge);
@@ -347,6 +386,12 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
   const layoutManaged = useMemo(
     () => (selectedId ? isLayoutManaged(root, selectedId) : false),
     [root, selectedId],
+  );
+  // A layout-managed slot (scroll-area row) can still be resized via handles when
+  // it has a LayoutElement — the resize writes its preferred size, not Rect offsets.
+  const layoutResizable = useMemo(
+    () => layoutManaged && !!selectedSlot?.components.some((c) => c.type === "LayoutElement"),
+    [layoutManaged, selectedSlot],
   );
 
   const storedRect = useMemo(
@@ -422,21 +467,16 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
     const cardIds = root.children
       .filter((c) => c.components.some((cc) => cc.type === "PopupContent"))
       .map((c) => c.id);
-    if (cardIds.length === 0 || !selectedId) return { cardIds, activeCardId: null };
-    const sel = findSlot(root, selectedId);
-    const popup = sel?.components.find((c) => c.type === "Popup");
-    let activeCardId: string | null = null;
-    if (popup) {
-      // Selection is a popup trigger → its linked content card is being edited.
-      const cid = (popup.props as { contentSlotId?: string }).contentSlotId;
-      if (cid && cardIds.includes(cid)) activeCardId = cid;
-    } else {
-      // Selection is the card itself or something inside it.
-      activeCardId =
-        cardIds.find((cid) => cid === selectedId || isDescendant(root, cid, selectedId)) ?? null;
-    }
+    // The active (lifted) card follows the EXPLICIT edit mode, not selection — so
+    // grips stay on the main canvas until the user opens a popup for editing.
+    if (cardIds.length === 0 || !editingPopupId) return { cardIds, activeCardId: null };
+    const host = findSlot(root, editingPopupId);
+    const cid = (host?.components.find((c) => c.type === "Popup")?.props as
+      | { contentSlotId?: string }
+      | undefined)?.contentSlotId;
+    const activeCardId = cid && cardIds.includes(cid) ? cid : null;
     return { cardIds, activeCardId };
-  }, [root, selectedId]);
+  }, [root, editingPopupId]);
 
   // While a popup floats in the dead space, its grips should HUG the card's left
   // edge rather than sit on the canvas's left gutter (the default rail), so they
@@ -579,9 +619,57 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
       }
     }
     // Outer (parent) grips first so the inner child grips render ON TOP of them.
+    const all = [...outerGrips, ...out];
+
+    // Side-by-side separation: when root members sit beside each other their
+    // grabber clusters would otherwise pile onto the same left rail at
+    // overlapping Y and blend together (hard to tell apart / grab the one you
+    // want). Push each member's grips (and the grips of everything nested inside
+    // it) further left by one tier per sibling to its RIGHT, so the leftmost
+    // element's cluster is furthest out and the rightmost stays on the normal
+    // rail. Stacked (full-width) members are alone in their row → no shift.
+    const rootC = containers.find((c) => c.isRoot);
+    if (rootC) {
+      const colsRight = new Map<string, number>(); // root child id → # siblings to its right in its row
+      for (const row of containerRows(root, rootC, canvasSize)) {
+        if (row.ids.length <= 1) continue;
+        const ordered = [...row.ids].sort(
+          (a, b) =>
+            (computeAbsoluteRect(root, a, canvasSize)?.x ?? 0) -
+            (computeAbsoluteRect(root, b, canvasSize)?.x ?? 0),
+        );
+        ordered.forEach((id, i) => colsRight.set(id, ordered.length - 1 - i));
+      }
+      if (colsRight.size > 0) {
+        // Walk a grip's element up to the root child it lives under.
+        const rootChildOf = (id: string): string | null => {
+          let cur = findSlot(root, id);
+          if (!cur) return null;
+          let p = findParent(root, cur.id);
+          while (p && p.id !== root.id) {
+            cur = p;
+            p = findParent(root, cur.id);
+          }
+          return p && p.id === root.id ? cur.id : null;
+        };
+        for (const g of all) {
+          // Only shift grips that represent a SINGLE element (a container/section
+          // grip or a lone side-by-side member). A COLLAPSED multi-member row grip
+          // (ids.length > 1 — e.g. a header's title+close, a button bar) is one
+          // handle for the WHOLE row and must stay on the normal rail: shifting it
+          // by its leftmost member's column pushed it far off-screen (the "grabber
+          // floats away" bug on the dialog preset and any collapsed side-by-side row).
+          if (g.ids.length !== 1) continue;
+          const rc = rootChildOf(g.ids[0]);
+          const n = rc ? colsRight.get(rc) ?? 0 : 0;
+          if (n > 0) g.railShift = -n * SIDE_RAIL_TIER;
+        }
+      }
+    }
+
     // Scope to the visible surface: hide popup-card grips unless that popup is
     // being edited, and hide the main canvas's grips while it is.
-    return [...outerGrips, ...out].filter((g) => gripInScope(root, popupScope, g.containerId));
+    return all.filter((g) => gripInScope(root, popupScope, g.containerId));
   }, [editMode, root, canvasSize, scrollInfo, popupScope]);
 
   // External purple scrollbars: one per scrollable nested container, in the
@@ -666,8 +754,12 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
       selectId?: string,
     ) => {
       setWidenToast(null); // a new drag supersedes any pending widen offer
+      // If a flow can't be started, still SELECT the grabbed element so the click
+      // isn't a dead gesture — the selection box + resize handles appear, telling
+      // the user the click registered even though there's nothing to reorder.
+      const selectFallback = () => select(selectId ?? draggedIds[0]);
       const container = findContainer(root, sourceContainerId, canvasSize);
-      if (!container) return;
+      if (!container) return void selectFallback();
       const items = rowItemsOf(root, container, canvasSize);
       const rowItemsMap: Record<string, Rect> = {};
       for (const it of items) rowItemsMap[it.id] = it.rect;
@@ -681,7 +773,7 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
         if (sl) minWidths[it.id] = contentMinWidth(sl, widthOf);
       }
       const dRects = draggedIds.map((id) => rowItemsMap[id]).filter(Boolean) as Rect[];
-      if (dRects.length === 0 || rows.length === 0) return;
+      if (dRects.length === 0 || rows.length === 0) return void selectFallback();
       const startRect = boundingRect(dRects);
 
       // Single-element drags select immediately, so a click (or micro-drag that
@@ -742,6 +834,7 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
       const thisIsRoot = slotId === root.id;
 
       let mode: DragMode;
+      let layoutResize = false;
       if (thisIsRoot) {
         if (kind === "move") return; // canvas isn't draggable; handles resize it
         mode = "canvas-resize";
@@ -757,15 +850,22 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
               beginFlow([m.memberId], m.containerId, clientX, clientY, undefined, slotId);
               return;
             }
-            if (isLayoutManaged(root, slotId)) return;
+            // Layout-managed but unresolved to a member: it reorders via its grip,
+            // not a body-drag — select it so the click still gives feedback.
+            if (isLayoutManaged(root, slotId)) return void select(slotId);
             mode = "free-move";
           } else {
-            if (isLayoutManaged(root, slotId)) return;
+            if (isLayoutManaged(root, slotId)) return void select(slotId);
             mode = "free-move";
           }
         } else {
-          // Resize via handles (both modes) — not for layout-managed slots.
-          if (isLayoutManaged(root, slotId)) return;
+          // Resize via handles (both modes). A LAYOUT-managed slot (scroll-area
+          // row) resizes by writing its LayoutElement preferred size — allowed
+          // only when it actually has a LayoutElement to write to.
+          if (isLayoutManaged(root, slotId)) {
+            if (!slot.components.some((c) => c.type === "LayoutElement")) return;
+            layoutResize = true;
+          }
           mode = "free-resize";
         }
       }
@@ -799,6 +899,17 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
         anchorMax: rtProps.anchorMax,
         slotId,
         started: startNow,
+        labelFit: mode === "free-resize" && !layoutResize ? labeledCompositeFit(slot) : null,
+        resizeMinW: mode === "free-resize" ? compositeResizeMinWidth(slot) : null,
+        containerMin:
+          mode === "free-resize"
+            ? containerResizeMin(
+                slot,
+                (s) => computeAbsoluteRect(root, s.id, canvasSize)?.h ?? 0,
+                ((root.components.find((c) => c.type === "Canvas")?.props as { contentPadding?: number } | undefined)?.contentPadding) ?? DEFAULT_CONTENT_PADDING,
+              )
+            : null,
+        layoutResize,
       };
       if (startNow) {
         dragStart();
@@ -1271,9 +1382,25 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
         //  • otherwise → in-row NUDGE: glide through the dead space, clamped so it
         //    never overlaps, for fine positioning / lone-element drag-to-align.
         const origOrder = f.sourceRows.flatMap((r) => r.ids);
-        const reordered =
+        const orderChanged =
           result.order.length !== origOrder.length ||
           result.order.some((id, i) => id !== origOrder[i]);
+        // A side-by-side merge INTO a different row is a genuine change even when
+        // the flat top→bottom order is unchanged — e.g. dropping an element to the
+        // RIGHT of the row directly above it: the flat order [.. A, B ..] stays
+        // [.. A, B ..], but B moves from its own row UP beside A. Detecting "did
+        // anything change?" by flat order alone misses this, so the in-row nudge
+        // path below would swallow the merge and the element just slides in place
+        // (the "Color Picker won't go to the right of Reference" report — they're
+        // vertically adjacent). Detect it by row MEMBERSHIP instead: does the merge
+        // target a row that shares no member with the dragged element's own source
+        // row? GLOBAL — fires for any two vertically-adjacent elements.
+        const srcRowIds =
+          f.sourceRows.find((r) => r.ids.includes(f.draggedIds[0]))?.ids ?? [];
+        const mergeTargetRow = drop.intoRow ? remaining[drop.rowIndex] : null;
+        const mergeIntoOtherRow =
+          !!mergeTargetRow && !mergeTargetRow.ids.some((id) => srcRowIds.includes(id));
+        const reordered = orderChanged || mergeIntoOtherRow;
         // `rel` is a deliberate "place beside/around a container" drop — always
         // reflow it, never treat it as an in-row nudge (the flat order may be
         // unchanged when the element was already adjacent to the container).
@@ -1395,6 +1522,81 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
       // Free move / resize (classic absolute drag). Tracks the cursor 1:1.
       let newRect = applyDrag(drag, dx, dy);
       if (snap.enabled) newRect = snapRect(newRect, drag.kind, snap.size);
+
+      // Labeled composite: never shrink past where the label + controls fit.
+      // `resizeMinW` is the floor for BOTH single-control composites (label + gap +
+      // control min) and multi-part ones (Radio Group — label + its options band),
+      // so the radials can't overlap. Vertical-only handles don't change width.
+      const fit = drag.labelFit;
+      const widthHandle = drag.kind !== "t" && drag.kind !== "b" && drag.kind !== "move";
+      const leftH = drag.kind === "l" || drag.kind === "tl" || drag.kind === "bl";
+      const topH = drag.kind === "t" || drag.kind === "tl" || drag.kind === "tr";
+      if (widthHandle && drag.resizeMinW && newRect.w < drag.resizeMinW) {
+        // Left-side handles drag the left edge — pin the right edge at the clamp.
+        if (leftH) newRect.x = drag.startRect.x + drag.startRect.w - drag.resizeMinW;
+        newRect.w = drag.resizeMinW;
+      }
+
+      // Container (ScrollArea / Tabs / layout): can't shrink below the size that
+      // still fits its biggest nested element.
+      if (drag.containerMin) {
+        const cm = drag.containerMin;
+        const heightHandle = drag.kind !== "l" && drag.kind !== "r" && drag.kind !== "move";
+        if (widthHandle && newRect.w < cm.minW) {
+          if (leftH) newRect.x = drag.startRect.x + drag.startRect.w - cm.minW;
+          newRect.w = cm.minW;
+        }
+        if (heightHandle && newRect.h < cm.minH) {
+          if (topH) newRect.y = drag.startRect.y + drag.startRect.h - cm.minH;
+          newRect.h = cm.minH;
+        }
+      }
+
+      // Layout-managed element (scroll-area row): the layout owns its position, so
+      // write its LayoutElement preferred size instead of Rect offsets (and skip
+      // the canvas clamp — position isn't ours to set). Width was already floored
+      // to the composite min above.
+      if (drag.layoutResize) {
+        setBoxGlide(false);
+        setPreviewRect(newRect);
+        setLayoutSize(drag.slotId, Math.max(MIN_SIZE, newRect.w), Math.max(MIN_SIZE, newRect.h));
+        return;
+      }
+
+      // Snap mode: an element may NEVER leave its container (canvas / tab page /
+      // scroll area). A move is shifted back inside; a resize has its edges
+      // clamped to the container box. Free mode allows off-canvas placement.
+      if (editMode === "snap") {
+        const pr = drag.parentAbsRect;
+        if (drag.kind === "move") {
+          newRect.x = Math.max(pr.x, Math.min(newRect.x, pr.x + pr.w - newRect.w));
+          newRect.y = Math.max(pr.y, Math.min(newRect.y, pr.y + pr.h - newRect.h));
+        } else {
+          const l = Math.max(newRect.x, pr.x);
+          const t = Math.max(newRect.y, pr.y);
+          const rgt = Math.min(newRect.x + newRect.w, pr.x + pr.w);
+          const bot = Math.min(newRect.y + newRect.h, pr.y + pr.h);
+          newRect = { x: l, y: t, w: Math.max(MIN_SIZE, rgt - l), h: Math.max(MIN_SIZE, bot - t) };
+        }
+      }
+
+      let compositeControlW: number | null = null;
+      if (fit && widthHandle) {
+        if (fit.position === "top") {
+          // Top-labelled: the control tracks the wrapper width via its anchors
+          // (stretchy) or stays natural-width — refitComposite re-applies the
+          // stacked layout (the value is ignored). The width floor is enforced by
+          // drag.resizeMinW above.
+          compositeControlW = fit.controlNatural;
+        } else {
+          const cmin = Math.min(fit.controlMin, fit.controlNatural);
+          compositeControlW = Math.max(
+            cmin,
+            Math.min(fit.controlNatural, newRect.w - fit.labelW - SNAP_GAP),
+          );
+        }
+      }
+
       setBoxGlide(false);
       setPreviewRect(newRect);
       const { offsetMin, offsetMax } = rectToOffsets(
@@ -1404,6 +1606,11 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
         drag.anchorMax,
       );
       dragApply(drag.slotId, offsetMin, offsetMax);
+      if (compositeControlW != null) refitComposite(drag.slotId, compositeControlW);
+      // Resizing a container narrower must shrink the CONTROLS of the composites
+      // inside it (label stays, input shrinks) — otherwise they clip. Runs after
+      // dragApply so each row's new width is already derived from the container.
+      if (drag.containerMin) refitContainerComposites(drag.slotId);
     }
 
     function onMouseUp() {
@@ -1474,14 +1681,29 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
         return;
       }
 
+      // Snap mode: a free resize/move can leave the element overlapping its
+      // siblings (the flow path above handles its own reflow; this covers the
+      // resize-handle / free-move path). Re-stack the element's container from the
+      // post-resize tree before committing, so snap never shows an overlap.
+      if (editMode === "snap" && (drag.mode === "free-resize" || drag.mode === "free-move")) {
+        // Read the live root from the store — a live preview reflow may have
+        // replaced the closed-over `root` since this listener was bound.
+        const parent = findParent(useStore.getState().root, drag.slotId);
+        if (parent) reflowContainerNow(parent.id);
+      }
       dragCommit();
     }
 
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onMouseUp);
+    // Safety net: if the button is released outside the window (no mouseup is
+    // delivered) or focus is lost mid-drag (alt-tab), finalize the drag where it
+    // is so the element never stays glued to the cursor until the next click.
+    window.addEventListener("blur", onMouseUp);
     return () => {
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
+      window.removeEventListener("blur", onMouseUp);
     };
   }, [
     scale,
@@ -1546,7 +1768,8 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
         // For a floating popup, hug the card's left edge instead of the canvas
         // gutter so the grabbers read as part of the popup, not the panel.
         const railLeft =
-          popupCardLeftX != null ? popupCardLeftX * scale - RAIL_W : g.railX;
+          (popupCardLeftX != null ? popupCardLeftX * scale - RAIL_W : g.railX) +
+          (g.railShift ?? 0);
         const railWidth = popupCardLeftX != null ? RAIL_W : width;
         return (
           <div
@@ -1566,13 +1789,16 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
               if (e.button !== 0 || dragController.spaceHeld) return;
               e.preventDefault();
               e.stopPropagation();
-              // A SINGLE-element row grip behaves like grabbing the element body:
+              // A SINGLE grabbable target behaves like grabbing the element body:
               // it can be dropped side-by-side (merge into a row) — passing
               // `undefined` lets beginFlow enable merging for a 1-element absolute
-              // drag. The section (container) grip and MULTI-element row grips stay
-              // reorder-only (allowInto=false): moving a whole 3-button row or a
-              // scroll-area section into another row should never merge them.
-              const reorderOnly = g.kind === "container" || g.ids.length > 1;
+              // drag. This now INCLUDES a single nested-container "section" grip
+              // (purple), so a ScrollArea / Tabs section can be placed BESIDE
+              // another element, not just re-stacked — the feasibility gate still
+              // blocks merges that wouldn't fit. Only MULTI-element row grips (a
+              // 3-button header, etc.) stay reorder-only: moving a whole row as a
+              // unit into another row should never merge their members.
+              const reorderOnly = g.ids.length > 1;
               beginFlow(g.ids, g.containerId, e.clientX, e.clientY, reorderOnly ? false : undefined);
             }}
             onMouseEnter={(e) => {
@@ -1691,7 +1917,7 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
               marginBottom: 3,
             }}
           >
-            {rowPicker.ids.length} elements here — pick one to edit
+            {t.dragLayer.pickElements(rowPicker.ids.length)}
           </div>
           {rowPicker.ids.map((id) => {
             const sl = findSlot(root, id);
@@ -1724,7 +1950,7 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
                   background: active ? "rgba(56,189,248,0.22)" : "transparent",
                 }}
               >
-                {sl ? controlDisplayName(sl) : id.slice(0, 8)}
+                {sl ? controlDisplayName(sl, lang) : id.slice(0, 8)}
               </button>
             );
           })}
@@ -1758,7 +1984,7 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
             whiteSpace: "nowrap",
           }}
         >
-          <span style={{ fontWeight: 600 }}>⚠ Not enough width to fit side-by-side.</span>
+          <span style={{ fontWeight: 600 }}>{t.dragLayer.notEnoughWidth}</span>
           <button
             onClick={() => {
               widenCanvasAndMerge(widenToast.containerId, widenToast.rowIds, widenToast.draggedIds);
@@ -1775,11 +2001,11 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
               fontWeight: 600,
             }}
           >
-            ⤢ Widen panel to fit
+            {t.dragLayer.widenPanel}
           </button>
           <button
             onClick={() => setWidenToast(null)}
-            title="Dismiss"
+            title={t.dragLayer.dismiss}
             style={{
               padding: "2px 6px",
               borderRadius: 6,
@@ -1894,7 +2120,14 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
               >
                 {locked ? "🔓" : "🔒"}
               </ChipBtn>
-              <ChipBtn title="Delete (Del)" danger onClick={() => remove(selectedId)}>
+              <ChipBtn
+                title="Delete (Del)"
+                danger
+                onClick={() => {
+                  const id = selectedId;
+                  confirmDeleteSlot(dialog.confirm, root, id).then((ok) => { if (ok) remove(id); });
+                }}
+              >
                 ✕
               </ChipBtn>
               <span style={{ marginLeft: 4, fontSize: 10, color: "#64748b" }}>
@@ -1925,8 +2158,8 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
                 whiteSpace: "nowrap",
               }}
             >
-              <span>Canvas {Math.round(oRect.w)}×{Math.round(oRect.h)}</span>
-              <span style={{ fontSize: 10, color: "#64748b" }}>drag handles to resize</span>
+              <span>{t.dragLayer.canvasSize(Math.round(oRect.w), Math.round(oRect.h))}</span>
+              <span style={{ fontSize: 10, color: "#64748b" }}>{t.dragLayer.dragToResize}</span>
             </div>
           )}
 
@@ -1943,13 +2176,15 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
                 pointerEvents: "none",
               }}
             >
-              In a container — drag the purple grip to reorder; resize via Inspector
+              {t.dragLayer.inContainer}
+              {layoutResizable ? t.dragLayer.thenInlineResize : t.dragLayer.thenInspectorResize}
             </div>
           )}
 
-          {/* Resize handles (canvas root + free, non-layout slots) */}
-          {(isRootSelected || (!locked && !layoutManaged)) &&
-            HANDLES.map((h) => {
+          {/* Resize handles: canvas root, free non-layout slots, AND layout-managed
+              rows that have a LayoutElement (resize writes its preferred size). */}
+          {(isRootSelected || (!locked && (!layoutManaged || layoutResizable))) &&
+            (isRootSelected ? CANVAS_HANDLES : HANDLES).map((h) => {
               const pos = handlePos(oRect, h, scale);
               return (
                 <div

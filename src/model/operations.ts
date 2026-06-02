@@ -68,6 +68,27 @@ export function toggleLock(root: Slot, id: string): Slot {
   return r;
 }
 
+// Set a composite wrapper's label position ("left" | "top"). Stored on the slot
+// itself (not a component) so it survives native save/load; the editor reads it
+// via labelPositionOf to drive the internal label/control layout.
+export function setLabelPositionField(root: Slot, id: string, pos: "left" | "top"): Slot {
+  const r = clone(root);
+  const target = findSlot(r, id);
+  if (!target) return root;
+  target.labelPosition = pos;
+  return r;
+}
+
+// Replace a slot's children wholesale (used by generators that rebuild a
+// subtree from data — e.g. the radial group regenerating its option slots).
+export function setSlotChildren(root: Slot, id: string, children: Slot[]): Slot {
+  const r = clone(root);
+  const target = findSlot(r, id);
+  if (!target) return root;
+  target.children = children;
+  return r;
+}
+
 export function addComponent(root: Slot, slotId: string, type: UixComponentType): Slot {
   const r = clone(root);
   const target = findSlot(r, slotId);
@@ -157,6 +178,24 @@ function reassignIds(slot: Slot): Slot {
 }
 
 /**
+ * After a subtree is cloned with fresh slot ids, clear component props that hold
+ * the id of a slot OUTSIDE the copied subtree, so the duplicate doesn't silently
+ * share the original's linked slot. The concrete case is `Popup.contentSlotId`,
+ * which points at a dialog card living as a Canvas-root sibling (not inside the
+ * host) — nulling it makes ensurePopupContent build the copy its own card on the
+ * first "Edit popup". (Self-contained refs that live inside the subtree, e.g. a
+ * RefEditor's same-slot field links, are unaffected.)
+ */
+function clearStaleSlotRefs(slot: Slot): void {
+  for (const c of slot.components) {
+    if (c.type === "Popup") {
+      (c.props as Record<string, unknown>).contentSlotId = undefined;
+    }
+  }
+  for (const child of slot.children) clearStaleSlotRefs(child);
+}
+
+/**
  * Duplicate the slot with id `id`. The copy is inserted immediately after the
  * original in its parent's children list and gets fresh slot ids throughout.
  * Returns the new root and the new top-level slot id (so callers can select it).
@@ -173,6 +212,7 @@ export function duplicateSlot(
   if (idx < 0) return { root, newId: null };
   const original = parent.children[idx];
   const copy = reassignIds(clone(original));
+  clearStaleSlotRefs(copy);
   copy.name = uniqueCopyName(parent, original.name);
   parent.children.splice(idx + 1, 0, copy);
   return { root: r, newId: copy.id };
@@ -241,10 +281,12 @@ export function scaleSlotTree(root: Slot, fx: number, fy: number): Slot {
             break;
           case "VerticalLayout":
           case "HorizontalLayout":
+            // Guard >= 0: negative is the -1 "auto/inherit" sentinel, not a
+            // pixel inset to scale (padding follows the canvas).
             for (const k of ["paddingLeft", "paddingRight"])
-              if (typeof p[k] === "number") p[k] *= fx;
+              if (typeof p[k] === "number" && p[k] >= 0) p[k] *= fx;
             for (const k of ["paddingTop", "paddingBottom"])
-              if (typeof p[k] === "number") p[k] *= fy;
+              if (typeof p[k] === "number" && p[k] >= 0) p[k] *= fy;
             if (typeof p.spacing === "number") p.spacing *= avg;
             break;
           case "GridLayout":
@@ -253,15 +295,32 @@ export function scaleSlotTree(root: Slot, fx: number, fy: number): Slot {
             if (typeof p.spacingX === "number") p.spacingX *= fx;
             if (typeof p.spacingY === "number") p.spacingY *= fy;
             for (const k of ["paddingLeft", "paddingRight"])
-              if (typeof p[k] === "number") p[k] *= fx;
+              if (typeof p[k] === "number" && p[k] >= 0) p[k] *= fx;
             for (const k of ["paddingTop", "paddingBottom"])
-              if (typeof p[k] === "number") p[k] *= fy;
+              if (typeof p[k] === "number" && p[k] >= 0) p[k] *= fy;
             break;
           case "Knob":
             p.offOffsetMin = sv(p.offOffsetMin, fx, fy);
             p.offOffsetMax = sv(p.offOffsetMax, fx, fy);
             p.onOffsetMin = sv(p.onOffsetMin, fx, fy);
             p.onOffsetMax = sv(p.onOffsetMax, fx, fy);
+            break;
+          case "ScrollArea":
+            // Inner content padding + row spacing are pixel values — scale them
+            // with the container so a proportional ("scale contents") resize
+            // keeps the scroll area's insets in proportion.
+            // Guard >= 0: a negative value is the -1 "auto/inherit" sentinel
+            // (padding follows the canvas), not a real pixel inset to scale.
+            if (typeof p.padding === "number" && p.padding >= 0) p.padding *= avg;
+            if (typeof p.spacing === "number") p.spacing *= avg;
+            break;
+          case "Tabs":
+            // Tab-strip thickness scales on the strip's axis; page padding is a
+            // uniform inset → average. Keeps the tab bar/page insets proportional.
+            if (typeof p.tabBarSize === "number")
+              p.tabBarSize *= (p.tabPosition === "left" || p.tabPosition === "right") ? fx : fy;
+            if (typeof p.tabSpacing === "number") p.tabSpacing *= avg;
+            if (typeof p.pagePadding === "number" && p.pagePadding >= 0) p.pagePadding *= avg;
             break;
         }
       }

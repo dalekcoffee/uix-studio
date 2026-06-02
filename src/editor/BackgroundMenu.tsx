@@ -5,6 +5,7 @@ import type { Slot } from "../model/types";
 import { CustomImagePicker } from "./inspector/ImagePicker";
 import { useCustomImageUrl } from "./useCustomImageUrl";
 import { useDialog } from "./useDialog";
+import { useT } from "../locale/useT";
 
 // Background menu — owns the panel's backdrop. Sets a Single background (both
 // faces) or Per-side (front vs back), each either a solid color or an image
@@ -16,12 +17,6 @@ import { useDialog } from "./useDialog";
 type Target = "both" | "front" | "back";
 type Color = { r: number; g: number; b: number; a: number };
 
-const FIT_HINTS: Record<"fit" | "stretch" | "full", string> = {
-  fit: "Whole image visible, letterboxed (may leave bars on the sides).",
-  stretch: "Stretched to fill exactly — can deform the image.",
-  full: "Covers the whole canvas, cropping overflow. No deformation.",
-};
-
 function imageProps(slot: Slot | null): Record<string, unknown> {
   return (slot?.components.find((c) => c.type === "Image")?.props ?? {}) as Record<string, unknown>;
 }
@@ -31,6 +26,7 @@ function faceKind(p: Record<string, unknown>): "color" | "image" {
 
 export default function BackgroundMenu({ onClose }: { onClose: () => void }) {
   const root = useStore((s) => s.root);
+  const t = useT();
   const ensureBackgroundTrio = useStore((s) => s.ensureBackgroundTrio);
   const { background, frontBacking, backCover } = findBackgroundSlots(root);
 
@@ -47,33 +43,33 @@ export default function BackgroundMenu({ onClose }: { onClose: () => void }) {
   return (
     <div className="w-[340px] max-h-[80vh] overflow-y-auto rounded-lg border border-slate-700 bg-slate-900 p-3 text-xs text-slate-200 shadow-2xl">
       <div className="mb-2 flex items-center justify-between">
-        <span className="text-sm font-semibold text-slate-100">Background</span>
-        <button onClick={onClose} className="text-slate-400 hover:text-slate-200" title="Close">✕</button>
+        <span className="text-sm font-semibold text-slate-100">{t.bg.title}</span>
+        <button onClick={onClose} className="text-slate-400 hover:text-slate-200" title={t.bg.close}>✕</button>
       </div>
 
       {!background ? (
         <div className="flex flex-col gap-2">
           <p className="text-[11px] leading-snug text-slate-400">
-            This panel has no background layer. Add one to set a front/back color or image.
+            {t.bg.noLayer}
           </p>
           <button
             onClick={ensureBackgroundTrio}
             className="rounded border border-sky-500 bg-sky-600 px-2 py-1.5 text-white transition hover:bg-sky-500"
           >
-            Add background
+            {t.bg.addBackground}
           </button>
         </div>
       ) : (
         <>
           <div className="mb-1.5 flex items-center gap-1">
-            <ModeBtn active={!perSide} onClick={() => setPerSide(false)} label="Single" hint="One background for the whole panel" />
-            <ModeBtn active={perSide} onClick={() => setPerSide(true)} label="Per-side" hint="Different front and back" />
+            <ModeBtn active={!perSide} onClick={() => setPerSide(false)} label={t.bg.single} hint={t.bg.singleHint} />
+            <ModeBtn active={perSide} onClick={() => setPerSide(true)} label={t.bg.perSide} hint={t.bg.perSideHint} />
           </div>
 
           {perSide ? (
             <>
-              <FaceEditor target="front" label="Front" props={fb} />
-              <FaceEditor target="back" label="Back" props={bc} />
+              <FaceEditor target="front" label={t.bg.front} props={fb} />
+              <FaceEditor target="back" label={t.bg.back} props={bc} />
             </>
           ) : (
             <FaceEditor target="both" label="" props={fb} />
@@ -102,6 +98,9 @@ function FaceEditor({ target, label, props }: { target: Target; label: string; p
   const setBackground = useStore((s) => s.setBackground);
   const setBackgroundFit = useStore((s) => s.setBackgroundFit);
   const dialog = useDialog();
+  const t = useT();
+  const fitLabels: Record<"fit" | "stretch" | "full", string> = { fit: t.bg.fit, stretch: t.bg.stretch, full: t.bg.full };
+  const fitHints: Record<"fit" | "stretch" | "full", string> = { fit: t.bg.fitHint, stretch: t.bg.stretchHint, full: t.bg.fullHint };
   const kind = faceKind(props);
   // The active tab follows the face's actual kind (so applying an image reveals
   // the Image tab + framing immediately) unless the user explicitly switched.
@@ -114,7 +113,7 @@ function FaceEditor({ target, label, props }: { target: Target; label: string; p
   const applyImage = async (hash: string) => {
     const res = setBackground(target, { kind: "image", hash });
     if (!res.ok && res.reason === "mismatch") {
-      if (await dialog.confirm("The front and back currently use different background images. Replace both with this image?", { confirmLabel: "Replace Both" })) {
+      if (await dialog.confirm(t.bg.replaceBothConfirm, { confirmLabel: t.bg.replaceBoth })) {
         setBackground(target, { kind: "image", hash }, { force: true });
       }
     }
@@ -124,8 +123,8 @@ function FaceEditor({ target, label, props }: { target: Target; label: string; p
     <div className="mt-2 border-t border-slate-800 pt-2">
       {label && <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">{label}</div>}
       <div className="mb-2 flex items-center gap-1">
-        <TabBtn active={tab === "color"} onClick={() => { setTabOverride("color"); setBackground(target, { kind: "color", color }); }} label="Color" />
-        <TabBtn active={tab === "image"} onClick={() => setTabOverride("image")} label="Image" />
+        <TabBtn active={tab === "color"} onClick={() => { setTabOverride("color"); setBackground(target, { kind: "color", color }); }} label={t.bg.color} />
+        <TabBtn active={tab === "image"} onClick={() => setTabOverride("image")} label={t.bg.image} />
       </div>
 
       {tab === "color" ? (
@@ -139,25 +138,25 @@ function FaceEditor({ target, label, props }: { target: Target; label: string; p
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          <CustomImagePicker slotId="" currentHash={currentHash} label="Image" onHashChange={applyImage} />
+          <CustomImagePicker slotId="" currentHash={currentHash} label={t.bg.image} onHashChange={applyImage} />
           {currentHash && (
             <div className="rounded border border-slate-700 bg-slate-900/60 p-2">
-              <div className="mb-1.5 text-[10px] uppercase tracking-wide text-slate-400">Layout</div>
+              <div className="mb-1.5 text-[10px] uppercase tracking-wide text-slate-400">{t.bg.layout}</div>
               <div className="grid grid-cols-3 gap-1">
                 {(["fit", "stretch", "full"] as const).map((m) => (
                   <button
                     key={m}
                     onClick={() => setBackgroundFit(target, m)}
-                    title={FIT_HINTS[m]}
+                    title={fitHints[m]}
                     className={`rounded border px-2 py-1 text-[11px] capitalize transition ${
                       fit === m ? "border-sky-500 bg-sky-600/20 text-sky-200" : "border-slate-700 bg-slate-800 text-slate-200 hover:border-slate-500"
                     }`}
                   >
-                    {m}
+                    {fitLabels[m]}
                   </button>
                 ))}
               </div>
-              <div className="mt-1 text-[10px] leading-snug text-slate-500">{FIT_HINTS[fit]}</div>
+              <div className="mt-1 text-[10px] leading-snug text-slate-500">{fitHints[fit]}</div>
             </div>
           )}
           {currentHash && fit === "full" && (
@@ -193,6 +192,7 @@ function FramingControl({
   const setBackgroundCrop = useStore((s) => s.setBackgroundCrop);
   const dragStart = useStore((s) => s.dragStart);
   const dragCommit = useStore((s) => s.dragCommit);
+  const t = useT();
   const canvasProps = useStore((s) => s.root.components.find((c) => c.type === "Canvas")?.props) as
     | { sizeX?: number; sizeY?: number }
     | undefined;
@@ -215,13 +215,13 @@ function FramingControl({
   return (
     <div className="rounded border border-slate-700 bg-slate-900/60 p-2">
       <div className="mb-1.5 flex items-center justify-between">
-        <span className="text-[10px] uppercase tracking-wide text-slate-400">Framing</span>
+        <span className="text-[10px] uppercase tracking-wide text-slate-400">{t.bg.framing}</span>
         <button
           onClick={() => setBackgroundCrop(target, { focus: { x: 0.5, y: 0.5 }, zoom: 1 })}
           className="text-[10px] text-slate-500 hover:text-sky-300"
-          title="Re-center and reset zoom"
+          title={t.bg.resetTip}
         >
-          reset
+          {t.bg.reset}
         </button>
       </div>
       <div
@@ -246,7 +246,7 @@ function FramingControl({
           (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
           dragCommit();
         }}
-        title="Drag to reposition the visible area"
+        title={t.bg.dragReposition}
       >
         {url && (
           <img
@@ -269,7 +269,7 @@ function FramingControl({
         />
       </div>
       <div className="mt-2 flex items-center gap-2">
-        <span className="w-10 shrink-0 text-[10px] text-slate-400">Zoom</span>
+        <span className="w-10 shrink-0 text-[10px] text-slate-400">{t.bg.zoom}</span>
         <input
           type="range"
           min={1}
@@ -301,10 +301,11 @@ function TabBtn({ active, onClick, label }: { active: boolean; onClick: () => vo
 }
 
 function ColorRow({ value, onChange }: { value: Color; onChange: (c: Color) => void }) {
+  const t = useT();
   const hex = rgbToHex(value.r, value.g, value.b);
   return (
     <div className="flex items-center gap-2">
-      <span className="w-12 shrink-0 text-slate-300">Color</span>
+      <span className="w-12 shrink-0 text-slate-300">{t.bg.color}</span>
       <input
         type="color"
         value={hex}
@@ -328,11 +329,12 @@ function TransparencyRow({ target, alpha }: { target: Target; alpha: number }) {
   const setBackgroundOpacity = useStore((s) => s.setBackgroundOpacity);
   const dragStart = useStore((s) => s.dragStart);
   const dragCommit = useStore((s) => s.dragCommit);
+  const t = useT();
   const pct = Math.round((1 - alpha) * 100);
   return (
     <div className="flex items-center gap-2">
-      <span className="w-12 shrink-0 text-slate-300" title="How see-through the front of the panel is. The back stays opaque so it still shows only the logo + credits.">
-        Clear
+      <span className="w-12 shrink-0 text-slate-300" title={t.bg.clearTip}>
+        {t.bg.clear}
       </span>
       <input
         type="range"
@@ -344,7 +346,7 @@ function TransparencyRow({ target, alpha }: { target: Target; alpha: number }) {
         onChange={(e) => setBackgroundOpacity(target, 1 - parseInt(e.target.value, 10) / 100, { live: true })}
         onPointerUp={dragCommit}
         className="flex-1"
-        title="Front transparency"
+        title={t.bg.frontTransparency}
       />
       <span className="w-9 shrink-0 text-right font-mono text-[10px] text-slate-500">{pct}%</span>
     </div>

@@ -1,4 +1,6 @@
 import type { Slot } from "./types";
+import { localizedControlType } from "../locale/modelText";
+import { DEFAULT_LANG, type Lang } from "../locale/types";
 
 // Labelled composite controls get a self-describing name "<label> <type>" (e.g.
 // a "Slider" labelled "Volume" → "Volume Slider"), shown in the editor hierarchy
@@ -9,6 +11,24 @@ import type { Slot } from "./types";
 export const LABELLED_CONTROL_TYPES = new Set<string>([
   "Checkbox", "Toggle", "Slider", "Progress Bar", "Text Field", "Float Field",
   "Integer Field", "Radio Group", "Dropdown", "Reference Field", "Color Picker",
+]);
+
+// Where a composite's label sits relative to its control.
+export type LabelPosition = "left" | "top";
+
+// Read a wrapper's label position; absent ≡ "left" (the classic layout, so every
+// existing preset / saved panel keeps its exact geometry).
+export function labelPositionOf(slot: Slot): LabelPosition {
+  return slot.labelPosition === "top" ? "top" : "left";
+}
+
+// Composites whose control STRETCHES to the full wrapper width when the label is
+// placed on top (wide, variable-content controls). Everything else (Checkbox,
+// Toggle, Color Picker, Radio Group) keeps its natural width, left-aligned under
+// the label — stretching a 28px checkbox to full width looks wrong.
+export const STRETCHY_CONTROL_TYPES = new Set<string>([
+  "Slider", "Progress Bar", "Text Field", "Float Field", "Integer Field",
+  "Dropdown", "Reference Field",
 ]);
 
 // The visible label of a composite control = the trimmed `content` of the Text
@@ -40,7 +60,11 @@ export function combineControlName(label: string, type: string): string {
 
 // The display/export name for a slot: a default-named labelled composite becomes
 // "<label> <type>"; everything else keeps its own name (so user renames win).
-export function controlDisplayName(slot: Slot): string {
+//
+// `lang` localizes ONLY the type suffix and is for DISPLAY (hierarchy/inspector).
+// The exporter calls this WITHOUT lang so exported slot names stay English/stable.
+// The detection still keys off the English `slot.name`, so it's unaffected.
+export function controlDisplayName(slot: Slot, lang: Lang = DEFAULT_LANG): string {
   if (!LABELLED_CONTROL_TYPES.has(slot.name)) return slot.name;
-  return combineControlName(controlLabelText(slot), slot.name);
+  return combineControlName(controlLabelText(slot), localizedControlType(slot.name, lang));
 }

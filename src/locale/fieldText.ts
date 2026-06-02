@@ -1,0 +1,142 @@
+// Localized labels for the Inspector's per-field editors (FIELD_DESCRIPTORS in
+// model/components.ts) + the enum <select> option display text. Keyed by the
+// English label/value so the schema file stays untouched; English and any
+// unmapped string fall back to the original. Enum VALUES are never changed —
+// only their displayed text. Translations by Claude — may be imperfect.
+import type { Lang } from "./types";
+
+type Target = Exclude<Lang, "en">;
+
+const FIELD_LABELS: Record<string, Record<Target, string>> = {
+  "Accept Physical Touch": { ko: "물리 터치 허용", es: "Aceptar toque físico", ja: "物理タッチを許可" },
+  "Active Tab Color": { ko: "활성 탭 색상", es: "Color de pestaña activa", ja: "アクティブタブの色" },
+  "Active Tab": { ko: "활성 탭", es: "Pestaña activa", ja: "アクティブタブ" },
+  "Allow HDR": { ko: "HDR 허용", es: "Permitir HDR", ja: "HDR を許可" },
+  "Anchor Max": { ko: "앵커 최대", es: "Ancla máx", ja: "アンカー最大" },
+  "Anchor Min": { ko: "앵커 최소", es: "Ancla mín", ja: "アンカー最小" },
+  "Auto Size": { ko: "자동 크기", es: "Tamaño automático", ja: "自動サイズ" },
+  "Background Color": { ko: "배경 색상", es: "Color de fondo", ja: "背景色" },
+  "Background Tint": { ko: "배경 색조", es: "Tinte de fondo", ja: "背景の色合い" },
+  "Background": { ko: "배경", es: "Fondo", ja: "背景" },
+  "Button Color": { ko: "버튼 색상", es: "Color del botón", ja: "ボタンの色" },
+  "Cell Size X": { ko: "셀 크기 X", es: "Tamaño de celda X", ja: "セルサイズ X" },
+  "Cell Size Y": { ko: "셀 크기 Y", es: "Tamaño de celda Y", ja: "セルサイズ Y" },
+  "Clamp": { ko: "제한", es: "Limitar", ja: "クランプ" },
+  "Color": { ko: "색상", es: "Color", ja: "色" },
+  "Content": { ko: "내용", es: "Contenido", ja: "内容" },
+  "Corner Radius": { ko: "모서리 반경", es: "Radio de esquina", ja: "角の半径" },
+  "Default Content": { ko: "기본 내용", es: "Contenido por defecto", ja: "既定の内容" },
+  "Destroy Object Root": { ko: "객체 루트 파괴", es: "Destruir raíz del objeto", ja: "オブジェクトルートを破棄" },
+  "Direction": { ko: "방향", es: "Dirección", ja: "方向" },
+  "Disabled Color": { ko: "비활성 색상", es: "Color deshabilitado", ja: "無効時の色" },
+  "Edit Alpha": { ko: "알파 편집", es: "Editar alfa", ja: "アルファを編集" },
+  "Field Color": { ko: "필드 색상", es: "Color del campo", ja: "フィールドの色" },
+  "Fill Color": { ko: "채움 색상", es: "Color de relleno", ja: "塗りの色" },
+  "Flexible Height": { ko: "유연한 높이", es: "Altura flexible", ja: "可変の高さ" },
+  "Flexible Width": { ko: "유연한 너비", es: "Ancho flexible", ja: "可変の幅" },
+  "Font Size": { ko: "글꼴 크기", es: "Tamaño de fuente", ja: "フォントサイズ" },
+  "Force Expand H": { ko: "높이 강제 확장", es: "Forzar expansión alto", ja: "高さを強制拡張" },
+  "Force Expand W": { ko: "너비 강제 확장", es: "Forzar expansión ancho", ja: "幅を強制拡張" },
+  "Frame Color": { ko: "프레임 색상", es: "Color del marco", ja: "枠の色" },
+  "Group ID": { ko: "그룹 ID", es: "ID de grupo", ja: "グループ ID" },
+  "H Align": { ko: "가로 정렬", es: "Alineación H", ja: "横揃え" },
+  "Highlight Color": { ko: "강조 색상", es: "Color de resaltado", ja: "ハイライトの色" },
+  "Hover Vibrate": { ko: "호버 진동", es: "Vibrar al pasar", ja: "ホバー時に振動" },
+  "Hyperlink Reason": { ko: "하이퍼링크 사유", es: "Motivo del hipervínculo", ja: "ハイパーリンクの理由" },
+  "Hyperlink URL": { ko: "하이퍼링크 URL", es: "URL del hipervínculo", ja: "ハイパーリンク URL" },
+  "Icon Tint": { ko: "아이콘 색조", es: "Tinte del icono", ja: "アイコンの色合い" },
+  "Inactive Tab Color": { ko: "비활성 탭 색상", es: "Color de pestaña inactiva", ja: "非アクティブタブの色" },
+  "Index": { ko: "인덱스", es: "Índice", ja: "インデックス" },
+  "Initial Color": { ko: "초기 색상", es: "Color inicial", ja: "初期の色" },
+  "Initial State": { ko: "초기 상태", es: "Estado inicial", ja: "初期状態" },
+  "Initial Value": { ko: "초기 값", es: "Valor inicial", ja: "初期値" },
+  "Initially Selected": { ko: "초기 선택됨", es: "Seleccionado inicialmente", ja: "初期選択" },
+  "Inner Padding": { ko: "내부 여백", es: "Relleno interior", ja: "内側の余白" },
+  "Integers Only": { ko: "정수만", es: "Solo enteros", ja: "整数のみ" },
+  "Item Spacing": { ko: "항목 간격", es: "Espacio entre elementos", ja: "項目の間隔" },
+  "Label Color": { ko: "라벨 색상", es: "Color de etiqueta", ja: "ラベルの色" },
+  "Max": { ko: "최대", es: "Máx", ja: "最大" },
+  "Min Height": { ko: "최소 높이", es: "Altura mín", ja: "最小の高さ" },
+  "Min Width": { ko: "최소 너비", es: "Ancho mín", ja: "最小の幅" },
+  "Min": { ko: "최소", es: "Mín", ja: "最小" },
+  "Off Color": { ko: "꺼짐 색상", es: "Color apagado", ja: "オフの色" },
+  "Off Offset Max": { ko: "꺼짐 오프셋 최대", es: "Desfase apagado máx", ja: "オフ オフセット最大" },
+  "Off Offset Min": { ko: "꺼짐 오프셋 최소", es: "Desfase apagado mín", ja: "オフ オフセット最小" },
+  "Offset Max": { ko: "오프셋 최대", es: "Desfase máx", ja: "オフセット最大" },
+  "Offset Min": { ko: "오프셋 최소", es: "Desfase mín", ja: "オフセット最小" },
+  "On Color": { ko: "켜짐 색상", es: "Color encendido", ja: "オンの色" },
+  "On Offset Max": { ko: "켜짐 오프셋 최대", es: "Desfase encendido máx", ja: "オン オフセット最大" },
+  "On Offset Min": { ko: "켜짐 오프셋 최소", es: "Desfase encendido mín", ja: "オン オフセット最小" },
+  "Open Once": { ko: "한 번만 열기", es: "Abrir una vez", ja: "一度だけ開く" },
+  "Option Fill Color": { ko: "옵션 채움 색상", es: "Color de relleno de opción", ja: "オプションの塗り色" },
+  "Option Label Color": { ko: "옵션 라벨 색상", es: "Color de etiqueta de opción", ja: "オプションのラベル色" },
+  "Order Offset": { ko: "순서 오프셋", es: "Desfase de orden", ja: "順序オフセット" },
+  "Padding Bottom": { ko: "아래 여백", es: "Relleno inferior", ja: "下の余白" },
+  "Padding Left": { ko: "왼쪽 여백", es: "Relleno izquierdo", ja: "左の余白" },
+  "Padding Right": { ko: "오른쪽 여백", es: "Relleno derecho", ja: "右の余白" },
+  "Padding Top": { ko: "위 여백", es: "Relleno superior", ja: "上の余白" },
+  "Page Background": { ko: "페이지 배경", es: "Fondo de página", ja: "ページの背景" },
+  "Page Padding": { ko: "페이지 여백", es: "Relleno de página", ja: "ページの余白" },
+  "Pivot": { ko: "피벗", es: "Pivote", ja: "ピボット" },
+  "Pixel Scale": { ko: "픽셀 배율", es: "Escala de píxeles", ja: "ピクセルスケール" },
+  "Placeholder Color": { ko: "자리 표시자 색상", es: "Color del marcador", ja: "プレースホルダーの色" },
+  "Placeholder": { ko: "자리 표시자", es: "Marcador", ja: "プレースホルダー" },
+  "Power Curve": { ko: "파워 커브", es: "Curva de potencia", ja: "パワーカーブ" },
+  "Preferred Height": { ko: "선호 높이", es: "Altura preferida", ja: "推奨の高さ" },
+  "Preferred Width": { ko: "선호 너비", es: "Ancho preferido", ja: "推奨の幅" },
+  "Preserve Aspect": { ko: "비율 유지", es: "Conservar proporción", ja: "アスペクト比を維持" },
+  "Press Color": { ko: "누름 색상", es: "Color al pulsar", ja: "押下時の色" },
+  "Reason": { ko: "사유", es: "Motivo", ja: "理由" },
+  "Require Initial Press": { ko: "초기 누름 필요", es: "Requiere pulsación inicial", ja: "最初の押下が必要" },
+  "Rounded Corners": { ko: "둥근 모서리", es: "Esquinas redondeadas", ja: "角を丸める" },
+  "Scrollbar Roundness": { ko: "스크롤바 둥글기", es: "Redondez de la barra", ja: "スクロールバーの丸み" },
+  "Scrollbar Thumb": { ko: "스크롤바 손잡이", es: "Control de la barra", ja: "スクロールバーのつまみ" },
+  "Scrollbar Track": { ko: "스크롤바 트랙", es: "Pista de la barra", ja: "スクロールバーのトラック" },
+  "Selected Color": { ko: "선택 색상", es: "Color seleccionado", ja: "選択時の色" },
+  "Show Mask Graphic": { ko: "마스크 그래픽 표시", es: "Mostrar gráfico de máscara", ja: "マスク画像を表示" },
+  "Show Scrollbar": { ko: "스크롤바 표시", es: "Mostrar barra de desplazamiento", ja: "スクロールバーを表示" },
+  "Size X": { ko: "크기 X", es: "Tamaño X", ja: "サイズ X" },
+  "Size Y": { ko: "크기 Y", es: "Tamaño Y", ja: "サイズ Y" },
+  "Size": { ko: "크기", es: "Tamaño", ja: "サイズ" },
+  "Spacing X": { ko: "간격 X", es: "Espaciado X", ja: "間隔 X" },
+  "Spacing Y": { ko: "간격 Y", es: "Espaciado Y", ja: "間隔 Y" },
+  "Spacing": { ko: "간격", es: "Espaciado", ja: "間隔" },
+  "Stack Layout (reorderable in-game)": {
+    ko: "스택 레이아웃 (게임 내 재정렬 가능)",
+    es: "Diseño apilado (reordenable en el juego)",
+    ja: "スタックレイアウト（ゲーム内で並べ替え可能）",
+  },
+  "Tab Bar Size": { ko: "탭 바 크기", es: "Tamaño de la barra de pestañas", ja: "タブバーのサイズ" },
+  "Tab Spacing": { ko: "탭 간격", es: "Espacio entre pestañas", ja: "タブの間隔" },
+  "Tab Strip": { ko: "탭 스트립", es: "Tira de pestañas", ja: "タブストリップ" },
+  "Text Color": { ko: "텍스트 색상", es: "Color del texto", ja: "テキストの色" },
+  "URL": { ko: "URL", es: "URL", ja: "URL" },
+  "V Align": { ko: "세로 정렬", es: "Alineación V", ja: "縦揃え" },
+  "Value Written": { ko: "기록된 값", es: "Valor escrito", ja: "書き込む値" },
+  "Value": { ko: "값", es: "Valor", ja: "値" },
+};
+
+// Enum <select> option display text. VALUE stays the English key; only the shown
+// label is localized.
+const ENUM_OPTIONS: Record<string, Record<Target, string>> = {
+  Horizontal: { ko: "가로", es: "Horizontal", ja: "横" },
+  Vertical: { ko: "세로", es: "Vertical", ja: "縦" },
+  Left: { ko: "왼쪽", es: "Izquierda", ja: "左" },
+  Center: { ko: "가운데", es: "Centro", ja: "中央" },
+  Right: { ko: "오른쪽", es: "Derecha", ja: "右" },
+  Justify: { ko: "양쪽", es: "Justificado", ja: "両端" },
+  Top: { ko: "위", es: "Arriba", ja: "上" },
+  Middle: { ko: "중간", es: "Medio", ja: "中" },
+  Bottom: { ko: "아래", es: "Abajo", ja: "下" },
+  Both: { ko: "둘 다", es: "Ambos", ja: "両方" },
+};
+
+export function localizedFieldLabel(label: string, lang: Lang): string {
+  if (lang === "en") return label;
+  return FIELD_LABELS[label]?.[lang as Target] ?? label;
+}
+
+export function localizedEnumOption(value: string, lang: Lang): string {
+  if (lang === "en") return value;
+  return ENUM_OPTIONS[value]?.[lang as Target] ?? value;
+}

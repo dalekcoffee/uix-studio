@@ -1,9 +1,7 @@
 import { useRef, useState, useCallback } from "react";
-import { type UixComponentType } from "../model/types";
 import {
   PALETTE_GROUPS,
   SYSTEM_TYPE_LIST,
-  componentLabel,
   isKnownPaletteItem,
   type PaletteItem,
 } from "../model/palette";
@@ -11,6 +9,8 @@ import { useStore } from "../state/store";
 import { findSlot } from "../model/operations";
 import { resolveAddContainerId } from "./render/snapFlow";
 import { useDismissable } from "./useDismissable";
+import { useT } from "../locale/useT";
+import { localizedGroupLabel, localizedComponentLabel } from "../locale/paletteText";
 
 export default function AddMenu() {
   const [open, setOpen] = useState(false);
@@ -18,6 +18,8 @@ export default function AddMenu() {
   const selectedId = useStore((s) => s.selectedSlotId);
   const root = useStore((s) => s.root);
   const attach = useStore((s) => s.attachComponent);
+  const t = useT();
+  const lang = useStore((s) => s.language);
 
   // Adding always spawns a NEW element at the bottom of the page (or the bottom
   // of the nearest nested container the selection resolves to) — never onto the
@@ -25,7 +27,6 @@ export default function AddMenu() {
   const destId = resolveAddContainerId(root, selectedId ?? null);
   const destSlot = findSlot(root, destId);
   const destIsRoot = destId === root.id;
-  const present = new Set<UixComponentType>();
 
   const close = useCallback(() => setOpen(false), []);
   useDismissable(open, close, ref);
@@ -37,17 +38,19 @@ export default function AddMenu() {
     setOpen(false);
   }
 
-  const headerLabel = "Adding to";
-  const headerValue = destIsRoot ? "bottom of the page" : `bottom of ${destSlot?.name ?? "container"}`;
+  const headerLabel = t.addMenu.addingTo;
+  const headerValue = destIsRoot
+    ? t.addMenu.bottomOfPage
+    : t.addMenu.bottomOf(destSlot?.name ?? t.addMenu.container);
 
   return (
     <div className="relative" ref={ref}>
       <button
         onClick={() => setOpen((v) => !v)}
-        title={`Add a new element to ${headerValue}`}
+        title={t.addMenu.addTip(headerValue)}
         className="rounded border border-sky-500 bg-sky-600 px-2 py-1 text-white transition hover:bg-sky-500"
       >
-        + Add ▾
+        {t.addMenu.addBtn}
       </button>
 
       {open && (
@@ -67,19 +70,17 @@ export default function AddMenu() {
               return (
                 <Section
                   key={g.label}
-                  label={g.label}
+                  label={localizedGroupLabel(g.label, lang)}
                   hint={g.hint}
                   types={types}
-                  present={present}
                   onPick={add}
                 />
               );
             })}
             <Section
-              label="System"
-              hint="Plumbing — rarely needed manually"
+              label={t.addMenu.system}
+              hint={t.addMenu.systemHint}
               types={SYSTEM_TYPE_LIST}
-              present={present}
               onPick={add}
             />
           </div>
@@ -93,16 +94,18 @@ function Section({
   label,
   hint,
   types,
-  present,
   onPick,
 }: {
   label: string;
   hint?: string;
   types: ReadonlyArray<PaletteItem>;
-  present: Set<UixComponentType>;
   onPick: (t: PaletteItem) => void;
 }) {
+  const tr = useT();
+  const lang = useStore((s) => s.language);
   if (types.length === 0) return null;
+  // Adding always spawns a fresh element at the destination, so every type is
+  // always offered (nothing is ever "already attached").
   return (
     <div className="border-b border-slate-800 px-2 py-2 last:border-b-0">
       <div className="mb-1 flex items-baseline gap-2 px-1">
@@ -112,27 +115,16 @@ function Section({
         {hint && <span className="text-[10px] text-slate-600">{hint}</span>}
       </div>
       <div className="flex flex-wrap gap-1">
-        {types.map((t) => {
-          // Widget-only items (e.g. Spinner) aren't component types, so they're
-          // never "already attached" — always offered.
-          const already = present.has(t as UixComponentType);
-          return (
-            <button
-              key={t}
-              onClick={() => !already && onPick(t)}
-              disabled={already}
-              title={already ? `${componentLabel(t)} is already attached to this slot` : `Add ${componentLabel(t)}`}
-              className={`rounded border px-2 py-1 transition ${
-                already
-                  ? "cursor-not-allowed border-slate-800 bg-slate-900 text-slate-600"
-                  : "border-slate-700 bg-slate-800 text-slate-200 hover:border-sky-500 hover:text-sky-200"
-              }`}
-            >
-              {already ? "✓ " : "+ "}
-              {componentLabel(t)}
-            </button>
-          );
-        })}
+        {types.map((t) => (
+          <button
+            key={t}
+            onClick={() => onPick(t)}
+            title={tr.addMenu.addType(localizedComponentLabel(t, lang))}
+            className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-slate-200 transition hover:border-sky-500 hover:text-sky-200"
+          >
+            + {localizedComponentLabel(t, lang)}
+          </button>
+        ))}
       </div>
     </div>
   );

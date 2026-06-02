@@ -1,5 +1,6 @@
 import { useStore } from "../state/store";
 import type { Color, ThemePresetId } from "../model/theme";
+import { useT } from "../locale/useT";
 
 const PRESET_CHIPS: { id: ThemePresetId; label: string; swatch: string }[] = [
   { id: "dark",    label: "Dark",    swatch: "#0d0d0d" },
@@ -26,6 +27,7 @@ const HEADER_SIZE_PRESETS = [
 
 export default function ThemeMenu({ onClose }: { onClose: () => void }) {
   const theme = useStore((s) => s.theme);
+  const t = useT();
   const setTheme = useStore((s) => s.setTheme);
   const selectPreset = useStore((s) => s.selectThemePreset);
   const applyAll = useStore((s) => s.applyThemeAll);
@@ -34,6 +36,7 @@ export default function ThemeMenu({ onClose }: { onClose: () => void }) {
   const applyBody = useStore((s) => s.applyThemeBodyText);
   const applyAccent = useStore((s) => s.applyThemeAccent);
   const applyControlSurface = useStore((s) => s.applyThemeControlSurface);
+  const applyContainerSurface = useStore((s) => s.applyThemeContainerSurface);
   const applyButtonA = useStore((s) => s.applyThemeButtonA);
   const applyButtonB = useStore((s) => s.applyThemeButtonB);
   const applyCorner = useStore((s) => s.applyThemeCornerRadius);
@@ -43,17 +46,17 @@ export default function ThemeMenu({ onClose }: { onClose: () => void }) {
       className="w-[340px] max-h-[80vh] overflow-y-auto rounded-lg border border-slate-700 bg-slate-900 p-3 text-xs text-slate-200 shadow-2xl"
     >
       <div className="mb-2 flex items-center justify-between">
-        <span className="text-sm font-semibold text-slate-100">Theme</span>
+        <span className="text-sm font-semibold text-slate-100">{t.theme.title}</span>
         <button
           onClick={onClose}
           className="text-slate-400 hover:text-slate-200"
-          title="Close"
+          title={t.theme.close}
         >
           ✕
         </button>
       </div>
 
-      <Section title="Preset">
+      <Section title={t.theme.presetSection}>
         <div className="flex flex-wrap gap-1.5">
           {PRESET_CHIPS.map((p) => {
             const active = theme.preset === p.id;
@@ -71,7 +74,7 @@ export default function ThemeMenu({ onClose }: { onClose: () => void }) {
                   className="inline-block h-3 w-3 rounded-sm ring-1 ring-slate-600"
                   style={{ background: p.swatch }}
                 />
-                {p.label}
+                {t.theme.presets[p.id as keyof typeof t.theme.presets] ?? p.label}
               </button>
             );
           })}
@@ -81,52 +84,58 @@ export default function ThemeMenu({ onClose }: { onClose: () => void }) {
                 ? "border-sky-500 bg-sky-500/15 text-sky-100"
                 : "border-slate-700/50 bg-slate-800/40 text-slate-500"
             }`}
-            title="Set automatically when you manually edit any theme value"
+            title={t.theme.customTip}
           >
-            Custom
+            {t.theme.custom}
           </div>
         </div>
         <p className="mt-1.5 text-[10px] text-slate-500">
-          Picking a preset replaces all theme values and applies them to the panel.
+          {t.theme.presetHint}
         </p>
       </Section>
 
-      <Section title="Colors">
+      <Section title={t.theme.colors}>
         <ColorRow
-          label="Background"
+          label={t.theme.background}
           value={theme.background}
           onChange={(c) => { setTheme({ background: c }); applyBackground(); }}
-          hint="Panel fill · header · body surface"
+          hint={t.theme.backgroundHint}
         />
         <ColorRow
-          label="Accent"
+          label={t.theme.accent}
           value={theme.accent}
           onChange={(c) => { setTheme({ accent: c }); applyAccent(); }}
-          hint="Slider fill · progress · toggle · radio dot · spinner"
+          hint={t.theme.accentHint}
         />
         <ColorRow
-          label="Controls"
+          label={t.theme.controls}
           value={theme.controlSurface}
           onChange={(c) => { setTheme({ controlSurface: c }); applyControlSurface(); }}
-          hint="Slider track · text field · checkbox · pill · dropdown · radio bg"
+          hint={t.theme.controlsHint}
         />
         <ColorRow
-          label="Button A"
+          label={t.theme.container}
+          value={theme.containerSurface}
+          onChange={(c) => { setTheme({ containerSurface: c }); applyContainerSurface(); }}
+          hint={t.theme.containerHint}
+        />
+        <ColorRow
+          label={t.theme.buttonA}
           value={theme.buttonA}
           onChange={(c) => { setTheme({ buttonA: c }); applyButtonA(); }}
-          hint="Primary action — hover/press shades auto-derived"
+          hint={t.theme.buttonAHint}
         />
         <ColorRow
-          label="Button B"
+          label={t.theme.buttonB}
           value={theme.buttonB}
           onChange={(c) => { setTheme({ buttonB: c }); applyButtonB(); }}
-          hint="Secondary action"
+          hint={t.theme.buttonBHint}
         />
       </Section>
 
-      <Section title="Text">
+      <Section title={t.theme.text}>
         <TextRow
-          label="Header"
+          label={t.theme.header}
           color={theme.headerTextColor}
           size={theme.headerTextSize}
           presets={HEADER_SIZE_PRESETS}
@@ -134,7 +143,7 @@ export default function ThemeMenu({ onClose }: { onClose: () => void }) {
           onChangeSize={(n) => { setTheme({ headerTextSize: n }); applyHeader(); }}
         />
         <TextRow
-          label="Body"
+          label={t.theme.body}
           color={theme.bodyTextColor}
           size={theme.bodyTextSize}
           presets={TEXT_SIZE_PRESETS}
@@ -147,18 +156,18 @@ export default function ThemeMenu({ onClose }: { onClose: () => void }) {
         <button
           onClick={applyAll}
           className="w-full rounded border border-sky-500 bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-sky-500"
-          title="Re-push every theme value onto the panel — useful after loading a saved file or manually editing a slot"
+          title={t.theme.applyAllTip}
         >
-          Apply All to Panel
+          {t.theme.applyAll}
         </button>
         <p className="mt-1 text-[10px] text-slate-500">
-          Colors update the panel live as you edit. Use this to resync after loading a file or manually editing slots. Corner radius is excluded — apply it separately below.
+          {t.theme.applyAllHint}
         </p>
       </div>
 
-      <Section title="Layout">
+      <Section title={t.theme.layout}>
         <div className="flex items-center gap-2">
-          <span className="w-20 shrink-0 text-slate-300">Radius</span>
+          <span className="w-20 shrink-0 text-slate-300">{t.theme.radius}</span>
           <input
             type="range"
             min={0}
@@ -171,10 +180,10 @@ export default function ThemeMenu({ onClose }: { onClose: () => void }) {
           <span className="w-10 shrink-0 text-right text-slate-400 tabular-nums">
             {theme.cornerRadius}%
           </span>
-          <ApplyButton onClick={applyCorner} title="Push this radius to every colored-shape Image" />
+          <ApplyButton onClick={applyCorner} title={t.theme.radiusApplyTip} />
         </div>
         <p className="mt-1 text-[10px] text-slate-500">
-          Manual only — does <em>not</em> auto-apply. Click Apply to bulk-set <code>cornerRadius</code> on every colored-shape Image (0 = square, 100 = pill). Skips photo/icon Images and overrides per-element radii.
+          {t.theme.radiusHintPre}<em>{t.theme.radiusHintNot}</em>{t.theme.radiusHintMid}<code>cornerRadius</code>{t.theme.radiusHintPost}
         </p>
       </Section>
     </div>
@@ -182,13 +191,14 @@ export default function ThemeMenu({ onClose }: { onClose: () => void }) {
 }
 
 function ApplyButton({ onClick, title }: { onClick: () => void; title?: string }) {
+  const t = useT();
   return (
     <button
       onClick={onClick}
       className="shrink-0 rounded border border-sky-500/60 bg-sky-500/10 px-2 py-0.5 text-[10px] text-sky-200 transition hover:bg-sky-500/25"
-      title={title ?? "Apply this value to every matching slot"}
+      title={title ?? t.theme.applyTip}
     >
-      Apply
+      {t.theme.apply}
     </button>
   );
 }
@@ -251,6 +261,7 @@ function TextRow({
   onChangeColor: (c: Color) => void;
   onChangeSize: (n: number) => void;
 }) {
+  const t = useT();
   const hex = rgbToHex(color.r, color.g, color.b);
   return (
     <div>
@@ -268,7 +279,7 @@ function TextRow({
         <span className="flex-1 font-mono text-[10px] text-slate-500">{hex}</span>
       </div>
       <div className="mt-1 flex items-center gap-1.5 pl-[88px]">
-        <span className="text-[10px] text-slate-500">Size</span>
+        <span className="text-[10px] text-slate-500">{t.theme.size}</span>
         {presets.map((p) => (
           <button
             key={p.label}
@@ -278,7 +289,7 @@ function TextRow({
                 ? "border-sky-500 bg-sky-500/15 text-sky-100"
                 : "border-slate-700 bg-slate-800 text-slate-300 hover:border-slate-500"
             }`}
-            title={`${p.label} = ${p.value}px`}
+            title={t.theme.sizeTip(p.label, p.value)}
           >
             {p.label}
           </button>

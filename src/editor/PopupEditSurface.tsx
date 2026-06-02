@@ -28,6 +28,7 @@ const HEADER_H = 34; // canvas px, the labelled band above the card
 
 export default function PopupEditSurface({ card, shift, scale, canvasSize }: Props) {
   const select = useStore((s) => s.select);
+  const closePopupEdit = useStore((s) => s.closePopupEdit);
 
   const scaledW = canvasSize.w * scale;
   const scaledH = canvasSize.h * scale;
@@ -36,7 +37,9 @@ export default function PopupEditSurface({ card, shift, scale, canvasSize }: Pro
     getRectTransform(card),
   );
 
-  const close = () => select(null);
+  // Closing the surface exits the explicit edit mode; the current selection is
+  // left as-is (the trigger stays selected so the Inspector keeps showing it).
+  const close = () => closePopupEdit();
 
   return (
     <>
@@ -91,6 +94,28 @@ export default function PopupEditSurface({ card, shift, scale, canvasSize }: Pro
             }
           }}
         >
+          {/* Card-area click backstop. Any click that lands inside the card
+              bounds but isn't consumed by a child element (padding, gaps between
+              controls, the card's own background) selects the CARD instead of
+              falling through to the bare-surface close handlers below — so
+              editing/selecting/resizing anywhere on the panel never closes it.
+              Only clicks in the dead space OUTSIDE the card close the surface.
+              Sits BEHIND the rendered card (rendered first), so child elements
+              and their resize handles stay individually selectable on top. */}
+          <div
+            className="absolute"
+            style={{
+              left: cardRect.x,
+              top: cardRect.y,
+              width: cardRect.w,
+              height: cardRect.h,
+            }}
+            onMouseDown={(e) => {
+              e.stopPropagation();
+              select(card.id);
+            }}
+            onClick={(e) => e.stopPropagation()}
+          />
           {/* Accent ring + drop shadow framing the card as its own surface. */}
           <div
             className="pointer-events-none absolute rounded-md"

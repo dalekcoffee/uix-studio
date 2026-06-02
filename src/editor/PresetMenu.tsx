@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { useStore } from "../state/store";
 import { BUILTIN_PRESETS, type PresetDescriptor } from "../model/presets";
 import { useDialog } from "./useDialog";
+import { useT } from "../locale/useT";
+import { localizedPresetName, localizedPresetDescription } from "../locale/presetMeta";
 
 // Category labels keyed by the literal category string on PresetDescriptor.
 // Ordered: this controls the section order in the menu.
@@ -15,16 +17,6 @@ const CATEGORY_ORDER: PresetDescriptor["category"][] = [
   "blank",
 ];
 
-const CATEGORY_LABELS: Record<PresetDescriptor["category"], string> = {
-  panel:     "Panels",
-  form:      "Forms",
-  "id-card": "ID Cards",
-  tool:      "Tools",
-  dialog:    "Dialogs",
-  marketing: "Marketing",
-  blank:     "Start fresh",
-};
-
 export default function PresetMenu() {
   const [open, setOpen] = useState(false);
   // Per-category expanded state. Empty set → all collapsed (the default the
@@ -35,7 +27,9 @@ export default function PresetMenu() {
   );
   const ref = useRef<HTMLDivElement>(null);
   const loadPreset = useStore((s) => s.loadPreset);
+  const language = useStore((s) => s.language);
   const dialog = useDialog();
+  const t = useT();
 
   useEffect(() => {
     if (!open) return;
@@ -62,8 +56,8 @@ export default function PresetMenu() {
   async function pick(p: PresetDescriptor) {
     if (
       !await dialog.confirm(
-        `Replace the current canvas with the "${p.name}" preset? Any unsaved work will be lost.`,
-        { confirmLabel: "Load Preset" },
+        t.presetMenu.replaceConfirm(localizedPresetName(p.id, p.name, language)),
+        { confirmLabel: t.presetMenu.loadPresetLabel },
       )
     ) {
       return;
@@ -93,20 +87,20 @@ export default function PresetMenu() {
     <div className="relative" ref={ref}>
       <button
         onClick={() => setOpen((v) => !v)}
-        title="Load a starting preset (replaces the current canvas)"
+        title={t.presetMenu.presetsTip}
         className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-slate-200 hover:bg-slate-700"
       >
-        Presets ▾
+        {t.presetMenu.presetsBtn}
       </button>
 
       {open && (
         <div className="absolute left-0 top-[calc(100%+4px)] z-50 w-80 rounded border border-slate-700 bg-slate-900 text-xs shadow-xl">
           <div className="border-b border-slate-800 px-3 py-2">
             <div className="text-[10px] uppercase tracking-wide text-slate-500">
-              Load a Preset
+              {t.presetMenu.loadPreset}
             </div>
             <div className="mt-0.5 text-[10px] text-slate-500">
-              Replaces the current canvas. Save first if you want to keep your work.
+              {t.presetMenu.loadPresetSub}
             </div>
           </div>
 
@@ -127,7 +121,7 @@ export default function PresetMenu() {
                       <span className="mr-1.5 inline-block w-2 text-slate-500">
                         {isOpen ? "▾" : "▸"}
                       </span>
-                      {CATEGORY_LABELS[cat]}
+                      {t.presetMenu.categories[cat]}
                     </span>
                     <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] tabular-nums text-slate-400">
                       {list.length}
@@ -141,9 +135,9 @@ export default function PresetMenu() {
                           onClick={() => pick(p)}
                           className="flex flex-col items-start gap-0.5 border-t border-slate-800 px-3 py-2 text-left hover:bg-slate-800/50"
                         >
-                          <span className="text-slate-100">{p.name}</span>
+                          <span className="text-slate-100">{localizedPresetName(p.id, p.name, language)}</span>
                           <span className="text-[10px] leading-snug text-slate-500">
-                            {p.description}
+                            {localizedPresetDescription(p.id, p.description, language)}
                           </span>
                         </button>
                       ))}
@@ -155,10 +149,8 @@ export default function PresetMenu() {
           </div>
 
           <div className="border-t border-slate-800 px-3 py-2 text-[10px] leading-snug text-slate-500">
-            The reference layouts in <code className="text-slate-400">UIX Template/</code>{" "}
-            (Preset Template 1–7, Rocker, Scroll area, …) are .resonitepackage
-            exports. Porting them into the editor requires a BSON importer — flag
-            this as a follow-up if you want them as one-click presets.
+            {t.presetMenu.footerPre} <code className="text-slate-400">UIX Template/</code>
+            {t.presetMenu.footerPost}
           </div>
         </div>
       )}

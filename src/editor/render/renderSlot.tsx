@@ -1,13 +1,42 @@
+import { useMemo } from "react";
 import type { Slot, UixComponent } from "../../model/types";
 import { computeChildRect, getRectTransform, type Rect } from "./rectTransform";
 import { getLayoutKind, layoutChildren } from "./layoutEngine";
+import { DEFAULT_CONTENT_PADDING, resolvePad } from "../../model/padding";
 import { useStore } from "../../state/store";
+import { useT } from "../../locale/useT";
 import { colorToCss } from "./colorUtils";
 import { useCustomImageUrl } from "../useCustomImageUrl";
 import { isStructuralSlot } from "../../model/structural";
 import { findBackgroundSlots } from "../../model/background";
-import { controllingClickable } from "../../model/clickable";
+import { controllingClickable, radioGroupHostOf } from "../../model/clickable";
+import { resolveTabClick } from "../../model/tabs";
 import { dragController } from "../dragController";
+import { measureTextWidth } from "../textMeasure";
+import { imageHasSprite } from "../../model/imageSprite";
+
+// Panel corner radius in canvas px — what a `matchPanelCorners` Image (e.g. the
+// header bar) rounds to, mirroring _panelCornerFixedSizePx at export:
+// (Front Backing cornerRadius / 100) × min(canvasW, canvasH) / 2. Every rendered
+// slot needs this, but it depends ONLY on the root, so memoize by root identity:
+// the findBackgroundSlots tree-walk runs once per tree instead of once per slot
+// on every unrelated store change (selection, viewport, drag…).
+let _panelCornerCache: { root: Slot; val: number } | null = null;
+function panelCornerPxOf(root: Slot): number {
+  if (_panelCornerCache && _panelCornerCache.root === root) return _panelCornerCache.val;
+  const canvas = root.components.find((c) => c.type === "Canvas");
+  const cp = (canvas?.props ?? {}) as { sizeX?: number; sizeY?: number };
+  const { frontBacking } = findBackgroundSlots(root);
+  const cr = (frontBacking?.components.find((c) => c.type === "Image")?.props as
+    | { cornerRadius?: number }
+    | undefined)?.cornerRadius;
+  const val =
+    typeof cr !== "number" || cr <= 0
+      ? 0
+      : (Math.min(100, cr) / 100) * (Math.min(cp.sizeX ?? 800, cp.sizeY ?? 600) / 2);
+  _panelCornerCache = { root, val };
+  return val;
+}
 
 // Shared easing for graceful snap-mode reflow. Used both by the blocks (here)
 // and the DragLayer overlay (selection box / handles / chip) so they glide in
@@ -45,13 +74,12 @@ export function RenderedSlot({ slot, rect, isRoot }: Props) {
   // Panel corner radius in canvas px — what an `matchPanelCorners` Image (e.g.
   // the header bar) rounds to, mirroring _panelCornerFixedSizePx at export:
   // (Front Backing cornerRadius / 100) × min(canvasW, canvasH) / 2.
-  const panelCornerPx = useStore((s) => {
-    const canvas = s.root.components.find((c) => c.type === "Canvas");
-    const cp = (canvas?.props ?? {}) as { sizeX?: number; sizeY?: number };
-    const { frontBacking } = findBackgroundSlots(s.root);
-    const cr = (frontBacking?.components.find((c) => c.type === "Image")?.props as { cornerRadius?: number } | undefined)?.cornerRadius;
-    if (typeof cr !== "number" || cr <= 0) return 0;
-    return (Math.min(100, cr) / 100) * (Math.min(cp.sizeX ?? 800, cp.sizeY ?? 600) / 2);
+  const panelCornerPx = useStore((s) => panelCornerPxOf(s.root));
+  // Canvas.contentPadding — nested container padding left on the -1 "auto"
+  // sentinel inherits half of this (resolved inside layoutChildren).
+  const canvasPad = useStore((s) => {
+    const cc = s.root.components.find((c) => c.type === "Canvas");
+    return ((cc?.props as { contentPadding?: number } | undefined)?.contentPadding) ?? DEFAULT_CONTENT_PADDING;
   });
   const nonSelectable = isStructuralSlot(slot);
 
@@ -78,6 +106,18 @@ export function RenderedSlot({ slot, rect, isRoot }: Props) {
   const scrollArea = getComponent(slot, "ScrollArea");
   const colorPicker = getComponent(slot, "ColorPicker");
   const spacer = getComponent(slot, "Spacer");
+  // Tabs host: show only the page at `activeTab`. The page index is positional
+  // among the host's TabPage children (matching the exporter's per-page
+  // ValueEqualityDriver index), so inactive pages — which overlap the active
+  // one — are hidden here, mirroring how only the selected page is Active
+  // in-game. activeTab is clamped to the available page count.
+  const tabs = getComponent(slot, "Tabs");
+  const tabPageCount = tabs
+    ? slot.children.filter((ch) => ch.components.some((c) => c.type === "TabPage")).length
+    : 0;
+  const tabsActive = tabs
+    ? Math.max(0, Math.min(tabPageCount - 1, ((tabs.props as { activeTab?: number }).activeTab ?? 0) | 0))
+    : 0;
   // Checkbox: when starting "off", hide the icon Image (matches Resonite's
   // BooleanValueDriver driving Tint alpha to 0).
   const checkboxOff = checkbox && (checkbox.props as { initialState?: boolean }).initialState === false;
@@ -127,14 +167,7 @@ export function RenderedSlot({ slot, rect, isRoot }: Props) {
     // sprite's transparent regions get obscured by an opaque colored rect.
     // Shape via cornerRadius is intentionally absent here because the Image's
     // tint IS the visible color of a corner-shaped (non-photographic) Image.
-    const hasHttpSpriteUrl =
-      typeof p.spriteUrl === "string" && /^https?:\/\//.test(p.spriteUrl as string);
-    const hasPhotographicSprite =
-      !!p.customImageHash ||
-      p.useHelpIcon || p.useCloseIcon || p.useCheckIcon || p.useBackspaceIcon ||
-      p.useSpinnerIcon ||
-      p.useLogoSprite ||
-      hasHttpSpriteUrl;
+    const hasPhotographicSprite = imageHasSprite(p);
     // The image placeholder paints no solid box — its themed hatched overlay
     // (drawn below) sits directly over the panel so the stripes read against the
     // background, matching the exported frosted-card look.
@@ -291,6 +324,13 @@ export function RenderedSlot({ slot, rect, isRoot }: Props) {
   } else if (!isRoot && showOverlays) {
     style.boxShadow = "inset 0 0 0 1px rgba(148, 163, 184, 0.2)";
   }
+  // Draggable bodies advertise themselves: a grab cursor on every selectable
+  // element (both modes drag from the body) so "what can I move" is obvious
+  // without clicking first. Skipped on the root canvas, locked, and structural
+  // slots (none are body-draggable).
+  if (!isRoot && !locked && !nonSelectable && showOverlays) {
+    style.cursor = "grab";
+  }
   // Spacer: an editor-only dashed placeholder so the otherwise-invisible filler
   // row is visible and grabbable. Exports as an empty slot (no pixels).
   if (spacer) {
@@ -303,12 +343,18 @@ export function RenderedSlot({ slot, rect, isRoot }: Props) {
 
   const layoutKind = getLayoutKind(slot);
   const containerRect: Rect = { x: 0, y: 0, w: rect.w, h: rect.h };
-  const layoutRects = layoutChildren(containerRect, slot, layoutKind);
+  // Memoized on the slot identity + container dimensions: the layout pass (sort +
+  // distribute) only needs to re-run when the slot subtree (immutable → new ref on
+  // edit) or its box changes, not on every unrelated re-render during a drag.
+  const layoutRects = useMemo(
+    () => layoutChildren(containerRect, slot, layoutKind, canvasPad),
+    [slot, rect.w, rect.h, layoutKind, canvasPad],
+  );
 
   // Scroll area: compute natural content extent from the (unbounded) layout rects.
   const saProps = scrollArea ? (scrollArea.props as any) : null;
   const saDir = (saProps?.direction as string) ?? "Vertical";
-  const saPad = (saProps?.padding as number) ?? 8;
+  const saPad = resolvePad(saProps?.padding as number | undefined, canvasPad);
   let scrollContentH = rect.h;
   let scrollContentW = rect.w;
   if (scrollArea && layoutRects && layoutRects.length > 0) {
@@ -336,8 +382,23 @@ export function RenderedSlot({ slot, rect, isRoot }: Props) {
         if (e.button !== 0 || isRoot || (locked && !isRoot)) return;
         if (dragController.spaceHeld) return; // let the Viewport pan instead
         const store = useStore.getState();
+        // Clicking a tab switches to it (and selects the Tabs host so the custom
+        // Tabs panel shows) rather than selecting the underlying button + starting
+        // a drag. Page CONTENT clicks fall through to normal select/drag.
+        const tabClick = resolveTabClick(store.root, slot.id);
+        if (tabClick) {
+          e.preventDefault();
+          e.stopPropagation();
+          store.selectTab(tabClick.hostId, tabClick.index);
+          return;
+        }
         const ctrl = controllingClickable(store.root, slot.id);
-        const targetId = ctrl && !ctrl.isSelf ? ctrl.slot.id : slot.id;
+        let targetId = ctrl && !ctrl.isSelf ? ctrl.slot.id : slot.id;
+        // A radial group moves as ONE unit — redirect any option/label grab to the
+        // group wrap so the whole cluster drags/resizes together (label position is
+        // component-defined, so individual moves are meaningless).
+        const rgHost = radioGroupHostOf(store.root, targetId);
+        if (rgHost) targetId = rgHost;
         if (targetId === store.root.id) return;
         e.preventDefault();
         e.stopPropagation();
@@ -352,13 +413,21 @@ export function RenderedSlot({ slot, rect, isRoot }: Props) {
         // the user expects that to select the Canvas — not nothing. Other
         // locked slots stay unselectable by click (use the Hierarchy tree).
         if (locked && !isRoot) return;
+        const tabClickSel = resolveTabClick(useStore.getState().root, slot.id);
+        if (tabClickSel) {
+          useStore.getState().selectTab(tabClickSel.hostId, tabClickSel.index);
+          return;
+        }
         // Composite buttons (close, popup, text buttons, checkboxes…) put the
         // icon/label on a child slot that draws on top, so a canvas click lands
         // on the glyph. Select the button it belongs to instead, so the user
         // gets the full pre-filled control config rather than the bare icon.
         // The glyph stays directly selectable from the Hierarchy tree.
-        const ctrl = controllingClickable(useStore.getState().root, slot.id);
-        select(ctrl && !ctrl.isSelf ? ctrl.slot.id : slot.id);
+        const clickRoot = useStore.getState().root;
+        const ctrl = controllingClickable(clickRoot, slot.id);
+        const baseTarget = ctrl && !ctrl.isSelf ? ctrl.slot.id : slot.id;
+        // Radial members select the whole group (see the mousedown handler).
+        select(radioGroupHostOf(clickRoot, baseTarget) ?? baseTarget);
       }}
       onContextMenu={(e) => {
         e.preventDefault();
@@ -502,15 +571,24 @@ export function RenderedSlot({ slot, rect, isRoot }: Props) {
           <ScrollAreaScrollbar props={saProps} />
         </>
       ) : (
-        slot.children.map((child, i) => {
-          // A popup card is a root child but floats as a centered overlay shown
-          // only while editing its popup — never inline here (see PopupEditOverlay).
-          if (child.components.some((c) => c.type === "PopupContent")) return null;
-          const childLocalRect = layoutRects
-            ? layoutRects[i]
-            : computeChildRect(containerRect, getRectTransform(child));
-          return <RenderedSlot key={child.id} slot={child} rect={childLocalRect} />;
-        })
+        (() => {
+          // Running positional index of TabPage children, so only the active
+          // page renders (the rest overlap it and are hidden).
+          let pageSeen = -1;
+          return slot.children.map((child, i) => {
+            // A popup card is a root child but floats as a centered overlay shown
+            // only while editing its popup — never inline here (see PopupEditOverlay).
+            if (child.components.some((c) => c.type === "PopupContent")) return null;
+            if (tabs && child.components.some((c) => c.type === "TabPage")) {
+              pageSeen++;
+              if (pageSeen !== tabsActive) return null;
+            }
+            const childLocalRect = layoutRects
+              ? layoutRects[i]
+              : computeChildRect(containerRect, getRectTransform(child));
+            return <RenderedSlot key={child.id} slot={child} rect={childLocalRect} />;
+          });
+        })()
       )}
 
       {isLayoutContainer && showOverlays && (
@@ -543,6 +621,7 @@ export function RenderedSlot({ slot, rect, isRoot }: Props) {
 }
 
 function ImagePlaceholderOverlay({ rect, color }: { rect: Rect; color?: { r: number; g: number; b: number; a: number } }) {
+  const t = useT();
   // Pick label size proportional to the rect so tiny placeholders don't
   // overflow with giant text. Hide the label entirely when there's no room.
   const minSide = Math.min(rect.w, rect.h);
@@ -585,16 +664,88 @@ function ImagePlaceholderOverlay({ rect, color }: { rect: Rect; color?: { r: num
       )}
       {showLabel && (
         <div style={{ fontSize: labelSize, fontWeight: 600, letterSpacing: 0.5 }}>
-          Image Placeholder
+          {t.placeholder.title}
         </div>
       )}
       {showLabel && (
         <div style={{ fontSize: labelSize * 0.7, opacity: 0.7 }}>
-          Upload an image in the Inspector
+          {t.placeholder.sub}
         </div>
       )}
     </div>
   );
+}
+
+// TextMeshPro auto-size (the exporter emits VerticalAutoSize with AutoSizeMin:8,
+// AutoSizeMax:64) GROWS the glyph to fill the box, shrinking only when the text
+// would overflow. The old preview merely clamped the authored size DOWN
+// (min(size, rect.h*0.6)), which inverted WYSIWYG — labels looked small in the
+// editor but rendered large in-world. fitAutoSize returns the largest size in
+// [8,64] whose word-wrapped text fits the padded rect in both axes.
+const AUTOSIZE_MIN = 8;
+const AUTOSIZE_MAX = 64;
+const TEXT_LINE_HEIGHT = 1.25; // matches exportBrson Text.LineHeight
+const TEXT_PAD = 4; // matches TextPreview padding below
+
+// CJK ideographs / kana / hangul / fullwidth forms. Each is an independent line-
+// break opportunity (UAX #14), so text wraps BETWEEN them — exactly how CSS and
+// Resonite lay out CJK. Without this, spaceless Japanese/Chinese is one giant
+// "word" that never fits, collapsing auto-size text to the 8px floor.
+const CJK_CHAR =
+  /[ᄀ-ᇿ　-〿぀-ヿ㐀-䶿一-鿿ꥠ-꥿가-퟿豈-﫿＀-￯]/;
+
+// Split a whitespace-delimited word into wrap units: each CJK character becomes
+// its own breakable unit; runs of Latin/digits stay whole (a Latin token like
+// "UIX" embedded in Japanese must not break mid-word). Pure-Latin words skip the
+// per-char walk entirely.
+function breakUnits(word: string): string[] {
+  if (!CJK_CHAR.test(word)) return [word];
+  const units: string[] = [];
+  let buf = "";
+  for (const ch of word) {
+    if (CJK_CHAR.test(ch)) {
+      if (buf) {
+        units.push(buf);
+        buf = "";
+      }
+      units.push(ch);
+    } else buf += ch;
+  }
+  if (buf) units.push(buf);
+  return units;
+}
+
+function fitAutoSize(text: string, rect: Rect): number {
+  const availW = Math.max(1, rect.w - TEXT_PAD * 2);
+  const availH = Math.max(1, rect.h - TEXT_PAD * 2);
+  const words = String(text ?? "").split(/\s+/).filter(Boolean);
+  for (let size = AUTOSIZE_MAX; size >= AUTOSIZE_MIN; size--) {
+    const spaceW = measureTextWidth(" ", size);
+    let lines = 1;
+    let lineW = 0;
+    let overflow = false;
+    outer: for (const word of words) {
+      // CJK chars wrap between themselves; a real space precedes only the FIRST
+      // unit of each word (CJK sub-units within a word join with no separator).
+      const units = breakUnits(word);
+      for (let i = 0; i < units.length; i++) {
+        const uw = measureTextWidth(units[i], size);
+        if (uw > availW) {
+          overflow = true; // an unbreakable unit can't fit the width at this size
+          break outer;
+        }
+        const sep = lineW > 0 && i === 0 ? spaceW : 0;
+        if (lineW + sep + uw <= availW) lineW += sep + uw;
+        else {
+          lines++;
+          lineW = uw;
+        }
+      }
+    }
+    if (overflow) continue;
+    if (lines * size * TEXT_LINE_HEIGHT <= availH) return size;
+  }
+  return AUTOSIZE_MIN;
 }
 
 function TextPreview({ props, rect }: { props: any; rect: Rect }) {
@@ -607,7 +758,7 @@ function TextPreview({ props, rect }: { props: any; rect: Rect }) {
 
   let fontSize = Number(props.size ?? 24);
   if (props.autoSize) {
-    fontSize = Math.min(fontSize, Math.max(8, rect.h * 0.6));
+    fontSize = fitAutoSize(String(props.content ?? ""), rect);
   }
 
   return (
@@ -618,8 +769,8 @@ function TextPreview({ props, rect }: { props: any; rect: Rect }) {
         alignItems: items,
         color: colorToCss(props.color),
         fontSize,
-        padding: 4,
-        lineHeight: 1.2,
+        padding: TEXT_PAD,
+        lineHeight: TEXT_LINE_HEIGHT,
         textAlign: align.toLowerCase() as React.CSSProperties["textAlign"],
         whiteSpace: "pre-wrap",
         // Mirror Resonite's wrapping exactly: wrap at spaces (word wrap), and

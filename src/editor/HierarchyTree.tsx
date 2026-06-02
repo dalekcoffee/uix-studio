@@ -5,6 +5,7 @@ import type { Slot } from "../model/types";
 import { controlDisplayName } from "../model/controlName";
 import { isStructuralSlot } from "../model/structural";
 import SidebarMenus from "./SidebarMenus";
+import { useT } from "../locale/useT";
 
 type DropPosition = "before" | "after" | "inside";
 
@@ -22,6 +23,7 @@ export default function HierarchyTree() {
   const selectedSlotId = useStore((s) => s.selectedSlotId);
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
   const draggingRef = useRef<string | null>(null);
+  const t = useT();
 
   // IDs of every ancestor of the selected slot (excluding the slot itself).
   // Rows in this set get a subtle "contains selection" highlight so the user
@@ -36,8 +38,8 @@ export default function HierarchyTree() {
     return (
       <button
         onClick={toggle}
-        title="Show Hierarchy panel"
-        aria-label="Show Hierarchy panel"
+        title={t.hierarchy.showPanel}
+        aria-label={t.hierarchy.showPanel}
         className="flex h-full w-6 items-center justify-center border-r border-slate-800 bg-slate-900 text-slate-400 hover:bg-slate-800 hover:text-sky-300"
       >
         <span className="text-xs">▶</span>
@@ -49,29 +51,29 @@ export default function HierarchyTree() {
     <div className="flex h-full min-h-0 flex-col border-r border-slate-800 bg-slate-900">
       <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
         <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-          Hierarchy
+          {t.hierarchy.title}
         </span>
         <div className="flex items-center gap-0.5">
           <button
             onClick={expandAll}
-            title="Expand all"
-            aria-label="Expand all layers"
+            title={t.hierarchy.expandAll}
+            aria-label={t.hierarchy.expandAllAria}
             className="rounded px-1 text-xs text-slate-500 hover:bg-slate-800 hover:text-slate-300"
           >
             ⊞
           </button>
           <button
             onClick={collapseAll}
-            title="Collapse all"
-            aria-label="Collapse all layers"
+            title={t.hierarchy.collapseAll}
+            aria-label={t.hierarchy.collapseAllAria}
             className="rounded px-1 text-xs text-slate-500 hover:bg-slate-800 hover:text-slate-300"
           >
             ⊟
           </button>
           <button
             onClick={toggle}
-            title="Hide panel"
-            aria-label="Hide Hierarchy panel"
+            title={t.hierarchy.hidePanel}
+            aria-label={t.hierarchy.hidePanelAria}
             className="ml-1 rounded px-1 text-xs text-slate-500 hover:bg-slate-800 hover:text-slate-300"
           >
             ◀
@@ -127,6 +129,8 @@ function SlotNode({ slot, depth, dropTarget, setDropTarget, draggingRef, ancesto
   const clearRenaming = useStore((s) => s.clearRenaming);
   const root = useStore((s) => s.root);
   const dialog = useDialog();
+  const t = useT();
+  const lang = useStore((s) => s.language);
   const isRoot = depth === 0;
   const locked = !!slot.locked;
   // Visible children exclude hidden structural backdrop slots (see filter below).
@@ -134,7 +138,7 @@ function SlotNode({ slot, depth, dropTarget, setDropTarget, draggingRef, ancesto
   // The default name shown everywhere: a labelled composite's auto "<label>
   // <type>" (e.g. "Volume Slider"), or the slot's own name once the user has
   // renamed it (a custom name takes the slot out of the auto set, so it wins).
-  const displayName = controlDisplayName(slot);
+  const displayName = controlDisplayName(slot, lang);
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(displayName);
 
@@ -255,7 +259,7 @@ function SlotNode({ slot, depth, dropTarget, setDropTarget, draggingRef, ancesto
               toggleCollapsed(slot.id);
             }}
             className="flex h-4 w-4 items-center justify-center rounded text-[10px] text-slate-500 hover:bg-slate-700 hover:text-slate-200"
-            title={collapsed ? "Expand" : "Collapse"}
+            title={collapsed ? t.hierarchy.expand : t.hierarchy.collapse}
           >
             {collapsed ? "▶" : "▼"}
           </button>
@@ -287,7 +291,7 @@ function SlotNode({ slot, depth, dropTarget, setDropTarget, draggingRef, ancesto
         <span className="ml-1 text-[10px] text-slate-600">({slot.components.length})</span>
         <div className="ml-auto hidden items-center gap-1 group-hover:flex">
           <button
-            title={locked ? "Unlock layer" : "Lock layer"}
+            title={locked ? t.hierarchy.unlockLayer : t.hierarchy.lockLayer}
             className="rounded px-1 text-slate-400 hover:text-yellow-300"
             onClick={(e) => {
               e.stopPropagation();
@@ -297,7 +301,7 @@ function SlotNode({ slot, depth, dropTarget, setDropTarget, draggingRef, ancesto
             {locked ? "🔓" : "🔒"}
           </button>
           <button
-            title="Add child slot"
+            title={t.hierarchy.addChild}
             className="rounded px-1 text-slate-400 hover:text-sky-300"
             onClick={(e) => {
               e.stopPropagation();
@@ -308,7 +312,7 @@ function SlotNode({ slot, depth, dropTarget, setDropTarget, draggingRef, ancesto
           </button>
           {!isRoot && (
             <button
-              title="Duplicate (Ctrl+D)"
+              title={t.hierarchy.duplicateTip}
               className="rounded px-1 text-slate-400 hover:text-sky-300"
               onClick={(e) => {
                 e.stopPropagation();
@@ -320,11 +324,11 @@ function SlotNode({ slot, depth, dropTarget, setDropTarget, draggingRef, ancesto
           )}
           {!isRoot && (
             <button
-              title="Delete"
+              title={t.hierarchy.deleteTip}
               className="rounded px-1 text-slate-400 hover:text-rose-300"
               onClick={async (e) => {
                 e.stopPropagation();
-                if (await dialog.confirm(`Delete slot "${displayName}" and its children?`, { destructive: true, confirmLabel: "Delete" })) remove(slot.id);
+                if (await dialog.confirm(t.dialogs.deleteSlot.messageSlot(displayName), { destructive: true, confirmLabel: t.dialogs.deleteSlot.confirmLabel })) remove(slot.id);
               }}
             >
               ✕

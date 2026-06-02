@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { useT } from "../locale/useT";
 
 // Visual confirmation shown when switching between Snap and Free layout modes.
 // Replaces the old wall-of-text window.confirm() dialogs: the difference is an
@@ -14,6 +15,8 @@ interface Props {
 }
 
 export default function ModeSwitchDialog({ target, onConfirm, onCancel }: Props) {
+  const t = useT();
+  const targetLabel = target === "snap" ? t.modeSwitch.snap : t.modeSwitch.free;
   // Esc cancels, Enter confirms — standard modal affordances.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -34,12 +37,10 @@ export default function ModeSwitchDialog({ target, onConfirm, onCancel }: Props)
         onClick={(e) => e.stopPropagation()}
       >
         <div className="text-sm font-semibold text-slate-100">
-          Switch to {target === "snap" ? "Snap" : "Free"} mode?
+          {t.modeSwitch.title(targetLabel)}
         </div>
         <p className="mt-1 text-xs leading-snug text-slate-400">
-          {target === "snap"
-            ? "Snap arranges elements into stacked rows and reflows them. Manual positions you set in Free mode may shift. In return, the exported panel stays reorderable inside Resonite."
-            : "Free lets you place every element at exact coordinates — great for precise designs. But the exported panel can no longer be rearranged in-game: reordering its slots in Resonite won't move anything."}
+          {target === "snap" ? t.modeSwitch.snapDesc : t.modeSwitch.freeDesc}
         </p>
 
         {/* Side-by-side illustration; the target mode is highlighted. */}
@@ -53,13 +54,13 @@ export default function ModeSwitchDialog({ target, onConfirm, onCancel }: Props)
             onClick={onCancel}
             className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-slate-200 transition hover:bg-slate-700"
           >
-            Cancel
+            {t.modeSwitch.cancel}
           </button>
           <button
             onClick={onConfirm}
             className="rounded border border-sky-500 bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-sky-500"
           >
-            Switch to {target === "snap" ? "Snap" : "Free"}
+            {t.modeSwitch.switchTo(targetLabel)}
           </button>
         </div>
       </div>
@@ -68,6 +69,7 @@ export default function ModeSwitchDialog({ target, onConfirm, onCancel }: Props)
 }
 
 function ModeCard({ mode, active }: { mode: Mode; active: boolean }) {
+  const t = useT();
   return (
     <div
       className={`rounded-lg border p-2.5 transition ${
@@ -79,11 +81,11 @@ function ModeCard({ mode, active }: { mode: Mode; active: boolean }) {
       <div className="mb-1.5 flex items-center gap-1.5">
         <span className="text-xs">{mode === "snap" ? "▤" : "✥"}</span>
         <span className="text-xs font-semibold text-slate-100">
-          {mode === "snap" ? "Snap" : "Free"}
+          {mode === "snap" ? t.modeSwitch.snap : t.modeSwitch.free}
         </span>
         {active && (
           <span className="ml-auto rounded bg-sky-500/20 px-1.5 text-[9px] font-semibold uppercase tracking-wide text-sky-200">
-            Switching to
+            {t.modeSwitch.switchingTo}
           </span>
         )}
       </div>
@@ -104,9 +106,7 @@ function ModeCard({ mode, active }: { mode: Mode; active: boolean }) {
         )}
       </div>
       <div className="mt-1.5 text-[10px] leading-snug text-slate-400">
-        {mode === "snap"
-          ? "Stacked rows · reorderable in Resonite"
-          : "Exact positions · fixed once exported"}
+        {mode === "snap" ? t.modeSwitch.snapCardDesc : t.modeSwitch.freeCardDesc}
       </div>
     </div>
   );

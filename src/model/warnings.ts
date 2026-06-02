@@ -2,6 +2,9 @@ import type { Slot } from "./types";
 import { computeChildRect, getRectTransform, type Rect } from "../editor/render/rectTransform";
 import { getLayoutKind, layoutChildren } from "../editor/render/layoutEngine";
 import { isStructuralSlot } from "./structural";
+import { imageHasSprite } from "./imageSprite";
+import { getDict } from "../locale";
+import { DEFAULT_LANG, type Lang } from "../locale/types";
 
 export type WarningSeverity = "warning" | "info";
 
@@ -26,8 +29,12 @@ export function collectWarnings(
   // loaded). When provided, any Image.customImageHash not in the set is
   // flagged so the user knows their reference is dead.
   availableImageHashes: ReadonlySet<string> | null = null,
+  // UI language for the (user-facing) warning messages. Defaults to English so
+  // non-UI callers stay unaffected.
+  lang: Lang = DEFAULT_LANG,
 ): DocWarning[] {
   const out: DocWarning[] = [];
+  const t = getDict(lang).warnings;
 
   function walk(slot: Slot) {
     for (const c of slot.components) {
@@ -44,19 +51,14 @@ export function collectWarnings(
             slotId: slot.id,
             slotName: slot.name,
             code: "image-missing",
-            message:
-              `Custom image (${customHash.slice(0, 8)}…) is referenced but no longer in your library — slot will render as a blank tinted rect. Re-upload, pick a different image, or clear the reference.`,
+            message: t.imageMissing(customHash.slice(0, 8)),
             severity: "warning",
           });
         }
-        const hasSpriteUrl =
-          typeof p.spriteUrl === "string" && /^https?:\/\//.test(p.spriteUrl as string);
-        const hasIcon = p.useHelpIcon || p.useCloseIcon || p.useCheckIcon
-          || p.useBackspaceIcon || p.useSpinnerIcon
-          || p.useLogoSprite
-          // An image drop-zone placeholder (editor hatch + bundled "drop image
-          // here" sprite) is a deliberate "fill me" spot, not an empty leaf.
-          || p.useImagePlaceholder;
+        // A real sprite (custom image / system icon / http URL) OR a drop-zone
+        // placeholder (the editor hatch + bundled "drop image here" sprite, a
+        // deliberate "fill me" spot) both make this NOT an empty leaf.
+        const hasSprite = imageHasSprite(p) || !!p.useImagePlaceholder;
         const isShapeOnly = typeof p.cornerRadius === "number" && (p.cornerRadius as number) > 0; // visual rounded shape, not "empty"
         // A tinted rectangle with no sprite is fine when the slot exists to
         // host child slots (e.g. the Checkbox "Box" wrapping a Check Icon, or
@@ -80,9 +82,7 @@ export function collectWarnings(
         const isIntentionalBacking =
           p.useBackMaterial === true || p.useFrontBacking === true || isStructuralSlot(slot);
         if (
-          !hasCustom &&
-          !hasSpriteUrl &&
-          !hasIcon &&
+          !hasSprite &&
           !isShapeOnly &&
           !hostsChildren &&
           !backsContent &&
@@ -92,8 +92,7 @@ export function collectWarnings(
             slotId: slot.id,
             slotName: slot.name,
             code: "image-empty",
-            message:
-              "Image has no sprite, icon, or rounded shape — it will render as a solid tinted rectangle and may cover siblings beneath it.",
+            message: t.imageEmpty,
             severity: "warning",
           });
         }
@@ -106,7 +105,7 @@ export function collectWarnings(
             slotId: slot.id,
             slotName: slot.name,
             code: "text-empty",
-            message: "Text component has no content — nothing will render.",
+            message: t.textEmpty,
             severity: "info",
           });
         }
@@ -119,8 +118,7 @@ export function collectWarnings(
             slotId: slot.id,
             slotName: slot.name,
             code: "hyperlink-empty",
-            message:
-              "Hyperlink has no URL — clicking will show the confirmation but not open anything.",
+            message: t.hyperlinkEmpty,
             severity: "info",
           });
         }
@@ -137,8 +135,7 @@ export function collectWarnings(
             slotId: slot.id,
             slotName: slot.name,
             code: "popup-no-trigger",
-            message:
-              "Popup needs a Button or BoxCollider on the same slot to be clickable. Add one via + Add.",
+            message: t.popupNoTrigger,
             severity: "warning",
           });
         }
@@ -156,7 +153,7 @@ export function collectWarnings(
   const canvasComp = root.components.find((c) => c.type === "Canvas");
   const cp = canvasComp?.props as { sizeX?: number; sizeY?: number } | undefined;
   const rootRect: Rect = { x: 0, y: 0, w: cp?.sizeX ?? 800, h: cp?.sizeY ?? 600 };
-  collectOverlapWarnings(root, rootRect, rootRect, out);
+  collectOverlapWarnings(root, rootRect, rootRect, out, false, lang);
 
   return out;
 }
@@ -216,7 +213,9 @@ function collectOverlapWarnings(
   // viewport clips/scrolls it, so it never actually spills off the canvas. Skip
   // the off-canvas check for everything under a ScrollArea.
   insideScroll = false,
+  lang: Lang = DEFAULT_LANG,
 ) {
+  const t = getDict(lang).warnings;
   const layoutKind = getLayoutKind(parent);
   const parentIsScroll = parent.components.some((c) => c.type === "ScrollArea");
   const scrollScope = insideScroll || parentIsScroll;
@@ -245,15 +244,15 @@ function collectOverlapWarnings(
       const worst = Math.max(offLeft, offTop, offRight, offBottom);
       if (worst > 2) {
         const sides: string[] = [];
-        if (offLeft > 2) sides.push("left");
-        if (offTop > 2) sides.push("top");
-        if (offRight > 2) sides.push("right");
-        if (offBottom > 2) sides.push("bottom");
+        if (offLeft > 2) sides.push(t.sideLeft);
+        if (offTop > 2) sides.push(t.sideTop);
+        if (offRight > 2) sides.push(t.sideRight);
+        if (offBottom > 2) sides.push(t.sideBottom);
         out.push({
           slotId: child.id,
           slotName: child.name,
           code: "off-canvas",
-          message: `Extends past the canvas ${sides.join(" / ")} edge by ${Math.round(worst)}px — will be clipped or invisible in Resonite.`,
+          message: t.offCanvas(sides.join(" / "), Math.round(worst)),
           severity: "warning",
         });
       }
@@ -272,7 +271,7 @@ function collectOverlapWarnings(
           w: childRects[i].w,
           h: childRects[i].h,
         };
-        collectOverlapWarnings(parent.children[i], childAbs, canvasRect, out, scrollScope);
+        collectOverlapWarnings(parent.children[i], childAbs, canvasRect, out, scrollScope, lang);
       }
     }
     return;
@@ -319,7 +318,7 @@ function collectOverlapWarnings(
           slotId: ca.id,
           slotName: ca.name,
           code: "siblings-overlap",
-          message: `Overlaps "${cb.name}" — one may visually cover the other. Move, resize, or change anchors to fix.`,
+          message: t.siblingsOverlap(cb.name),
           severity: "info",
         });
       }
@@ -335,11 +334,11 @@ function collectOverlapWarnings(
         w: local.w,
         h: local.h,
       };
-      collectOverlapWarnings(parent.children[i], childAbs, canvasRect, out, scrollScope);
+      collectOverlapWarnings(parent.children[i], childAbs, canvasRect, out, scrollScope, lang);
     }
   } else {
     for (const c of parent.children) {
-      collectOverlapWarnings(c, parentAbsRect, canvasRect, out, scrollScope);
+      collectOverlapWarnings(c, parentAbsRect, canvasRect, out, scrollScope, lang);
     }
   }
 }

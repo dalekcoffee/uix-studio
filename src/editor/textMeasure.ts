@@ -4,10 +4,16 @@
 // editor — it doesn't need to match Resonite's font metrics exactly; callers add
 // a little breathing room (measureLabelWidth) to absorb the difference.
 
-// Matches the editor's body font (src/index.css) so measured widths track what
-// the preview renders.
-const FONT_FAMILY =
-  'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+// Measure with the SAME font the preview paints (bundled Resonite Noto Sans),
+// so snap min-widths / label boxes / composite fitting match what's rendered —
+// and what Resonite renders in-world. Before the font binary finishes loading,
+// the canvas falls back through this same stack to system sans (slightly
+// narrower); once loaded, measurement tracks the real glyph widths. (Previously
+// this measured against system Segoe UI, ~5–9px narrower than Noto, so labels
+// that fit in the editor char-wrapped in-game.)
+import { RESONITE_FONT } from "./render/resoniteFont";
+
+const FONT_FAMILY = RESONITE_FONT;
 
 let _ctx: CanvasRenderingContext2D | null = null;
 function ctx(): CanvasRenderingContext2D | null {

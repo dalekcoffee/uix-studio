@@ -19,6 +19,7 @@
 import type { Slot, UixComponentType } from "../../model/types";
 import { isStructuralSlot } from "../../model/structural";
 import { findSlot, findParent } from "../../model/operations";
+import { isInactiveTabPage } from "../../model/tabs";
 import { getLayoutKind } from "./layoutEngine";
 import { computeAbsoluteRect } from "./slotRect";
 import type { Rect } from "./rectTransform";
@@ -41,6 +42,13 @@ const NESTED_CONTAINER_TYPES: readonly UixComponentType[] = [
   // with its own grip, and you can drop into it like a ScrollArea. (Only
   // VerticalLayout is nested — Horizontal/Grid stay simple rows, see v0.1.5.)
   "VerticalLayout",
+  // A tab page — its CONTENT is the user's per-tab elements (absolute strategy,
+  // like a popup card). getContainers only counts the ACTIVE page (inactive ones
+  // are gated out via isInactiveTabPage) so the purple group grabber + blue
+  // element grips belong to the visible tab. The purple "whole section" grabber
+  // resolves to the Tabs HOST automatically (the host isn't itself a container,
+  // so the outer-grip walk-up climbs page → host → root).
+  "TabPage",
 ];
 // NOTE: plain layout groups (Vertical/Horizontal/Grid Layout) are deliberately
 // NOT nested containers. A button bar / header authored as a HorizontalLayout
@@ -104,7 +112,9 @@ export function getContainers(
   const out: SnapContainer[] = [];
   const visit = (slot: Slot, depth: number) => {
     const isRoot = depth === 0;
-    const nested = !isRoot && isNestedContainer(slot);
+    // Only the ACTIVE tab page is a live container; hidden tabs contribute no
+    // grabbers (per-tab scoping).
+    const nested = !isRoot && isNestedContainer(slot) && !isInactiveTabPage(root, slot);
     if (isRoot || nested) {
       const absRect =
         computeAbsoluteRect(root, slot.id, canvasSize) ??
@@ -743,6 +753,11 @@ export interface ColumnDrop {
 // reused by the drag layer's grip builder to decide when a multi-member row keeps
 // per-member grips (a tall element beside short ones) vs. collapses to one grip.
 export const TALL_FACTOR = 1.6;
+// Softened height gate used when the short side is ALREADY a column: still
+// requires a genuine height difference so an equal-height sibling beside a column
+// reorders normally instead of being hijacked into the stack — just a lower bar
+// than starting a brand-new column (TALL_FACTOR).
+const SOFT_TALL_FACTOR = 1.15;
 // Detect a dead-space-beside-tall drop. `remaining` = rows WITHOUT the dragged
 // element. Returns null unless the cursor is in the empty space beside a tall
 // member, vertically clear of the short member(s) (so dropping ON the short
@@ -777,11 +792,12 @@ export function detectColumnDrop(
     const others = row.ids.filter((id) => id !== tallId && rowItems[id]);
     if (others.length === 0) continue; // need a short member to stack with
     const secondH = Math.max(...others.map((id) => rowItems[id].h));
-    // A tall+short row triggers column behavior. Waive the ratio when the short
-    // side is already a column (see isColumn) — the band/overShort checks below
-    // still require genuine dead space, so an equal-height sibling never fires.
-    const othersHaveColumn = others.some((id) => isColumn(id));
-    if (!othersHaveColumn && T.h < TALL_FACTOR * secondH) continue; // not a tall+short row
+    // A tall+short row triggers column behavior. SOFTEN (don't waive) the ratio
+    // when the short side is already a column (see isColumn): a real-but-smaller
+    // height gap still counts, but an equal-height sibling beside a column no
+    // longer gets hijacked into the stack (it reorders normally).
+    const ratio = others.some((id) => isColumn(id)) ? SOFT_TALL_FACTOR : TALL_FACTOR;
+    if (T.h < ratio * secondH) continue; // not a tall+short row
     const shortLeft = Math.min(...others.map((id) => rowItems[id].x));
     const shortRight = Math.max(...others.map((id) => rowItems[id].x + rowItems[id].w));
     // Cursor must be in the short column horizontally, inside the tall member's

@@ -3,6 +3,7 @@
 // matching slots by name. Per-element values still win after apply — the
 // theme is a bulk operation, not a live binding.
 import type { Slot, UixComponent } from "./types";
+import { imageHasSprite } from "./imageSprite";
 
 export type Color = { r: number; g: number; b: number; a: number };
 
@@ -30,6 +31,13 @@ export interface Theme {
   // is dark or light. Tinted darker than `background` on dark themes, lighter
   // on light themes.
   controlSurface: Color;
+  // "Container surface" — the RAISED panel tier that holds other controls:
+  // a Tabs group's content page + active tab, and a ScrollArea's background.
+  // Distinct from both the panel background and `controlSurface`: the controls
+  // INSIDE a container keep riding controlSurface so they read as recessed wells
+  // against this raised surface. The inactive tabs + tab frame are derived from
+  // this by darkening (recede), so one token drives the whole tabbed/scroll look.
+  containerSurface: Color;
   buttonA: Color;
   buttonB: Color;
   cornerRadius: number; // 0-100 bulk corner radius; applied to shape Images only via the explicit Apply Corner Radius action
@@ -65,6 +73,8 @@ export const PRESETS: Record<Exclude<ThemePresetId, "custom">, Omit<Theme, "pres
     // (Dropdown, Reference Field, Slider tracks, TextField, ScrollArea bg,
     // Toggle off-state, Radio outer ring, etc.) and the Button B fill.
     controlSurface: rgb(0.0235, 0.0235, 0.0275),
+    // Raised tab/scroll surface — the experimental template's authored tab page.
+    containerSurface: rgb(0.16, 0.18, 0.23),
     buttonA: rgb(0.18, 0.36, 0.6),
     buttonB: rgb(0.0235, 0.0235, 0.0275),
     cornerRadius: 100,
@@ -80,6 +90,8 @@ export const PRESETS: Record<Exclude<ThemePresetId, "custom">, Omit<Theme, "pres
     bodyTextSize: 13,
     accent: rgb(0.15, 0.40, 0.85),
     controlSurface: rgb(0.85, 0.86, 0.88),
+    // White card raised above the light-grey panel; controls (0.85) recess into it.
+    containerSurface: rgb(1.0, 1.0, 1.0),
     buttonA: rgb(0.15, 0.40, 0.85),
     buttonB: rgb(0.82, 0.82, 0.82),
     cornerRadius: 100,
@@ -95,6 +107,7 @@ export const PRESETS: Record<Exclude<ThemePresetId, "custom">, Omit<Theme, "pres
     bodyTextSize: 13,
     accent: rgb(0.91, 0.54, 0.66),
     controlSurface: rgb(0.94, 0.80, 0.84),
+    containerSurface: rgb(0.98, 0.90, 0.92),
     buttonA: rgb(0.85, 0.42, 0.54),
     buttonB: rgb(0.96, 0.83, 0.85),
     cornerRadius: 100,
@@ -110,6 +123,7 @@ export const PRESETS: Record<Exclude<ThemePresetId, "custom">, Omit<Theme, "pres
     bodyTextSize: 13,
     accent: rgb(0.0, 0.85, 1.0),
     controlSurface: rgb(0.08, 0.12, 0.20),
+    containerSurface: rgb(0.10, 0.14, 0.24),
     buttonA: rgb(0.0, 0.62, 0.85),
     buttonB: rgb(0.10, 0.13, 0.19),
     cornerRadius: 100,
@@ -130,6 +144,7 @@ export const PRESETS: Record<Exclude<ThemePresetId, "custom">, Omit<Theme, "pres
     bodyTextSize: 13,
     accent: rgb(0.60, 0.46, 0.34),
     controlSurface: rgb(0.20, 0.15, 0.12),
+    containerSurface: rgb(0.24, 0.18, 0.14),
     buttonA: rgb(0.50, 0.36, 0.26),
     buttonB: rgb(0.27, 0.20, 0.15),
     cornerRadius: 100,
@@ -152,6 +167,9 @@ export const PRESETS: Record<Exclude<ThemePresetId, "custom">, Omit<Theme, "pres
     bodyTextSize: 13,
     accent: rgb(0.62, 0.78, 1.0),
     controlSurface: rgb(1.0, 1.0, 1.0, 0.22),
+    // Slightly more opaque translucent white so the tab/scroll area reads as a
+    // raised glass panel over the see-through background.
+    containerSurface: rgb(1.0, 1.0, 1.0, 0.28),
     buttonA: rgb(0.34, 0.58, 0.94, 0.85),
     buttonB: rgb(1.0, 1.0, 1.0, 0.18),
     cornerRadius: 100,
@@ -186,6 +204,7 @@ export function normalizeTheme(raw: unknown): Theme {
     bodyTextSize: typeof r.bodyTextSize === "number" ? r.bodyTextSize : base.bodyTextSize,
     accent: r.accent ?? base.accent,
     controlSurface: r.controlSurface ?? base.controlSurface,
+    containerSurface: r.containerSurface ?? base.containerSurface,
     buttonA: r.buttonA ?? base.buttonA,
     buttonB: r.buttonB ?? base.buttonB,
     cornerRadius: typeof r.cornerRadius === "number" ? r.cornerRadius : base.cornerRadius,
@@ -252,11 +271,14 @@ function isLocked(comp: UixComponent | undefined): boolean {
 
 // Component types that signal an interactive control-surface slot (slider
 // track, progress bar, text input, dropdown trigger, toggle pill, radio dot,
-// reference drop target, scroll area). Extracted to module scope so both
-// applyControlSurface and isSectionPillSlot can reference the same set.
+// reference drop target). Extracted to module scope so both applyControlSurface
+// and isSectionPillSlot can reference the same set. NOTE: ScrollArea is NOT
+// here — a scroll area is a CONTAINER (it holds other controls), so its
+// background rides `containerSurface` (see applyContainerSurface), not the
+// control-field surface, which the controls inside it use.
 const CONTROL_FIELD_TYPES = new Set([
   "Slider", "ProgressBar", "TextField", "Dropdown",
-  "Toggle", "Radio", "ReferenceField", "ScrollArea",
+  "Toggle", "Radio", "ReferenceField",
 ]);
 
 // Returns true for "section pill" slots: a shaped Image (cornerRadius > 0,
@@ -269,11 +291,7 @@ function isSectionPillSlot(s: Slot): boolean {
   const img = s.components.find((c) => c.type === "Image");
   if (!img) return false;
   const p = img.props as Record<string, unknown>;
-  const hasSprite =
-    !!p.customImageHash ||
-    p.useHelpIcon || p.useCloseIcon || p.useCheckIcon ||
-    p.useBackspaceIcon || p.useSpinnerIcon || p.useLogoSprite ||
-    (typeof p.spriteUrl === "string" && /^https?:\/\//.test(p.spriteUrl as string));
+  const hasSprite = imageHasSprite(p);
   const isShape = typeof p.cornerRadius === "number" && (p.cornerRadius as number) > 0;
   if (!isShape || hasSprite) return false;
   // The label may sit on the pill slot itself (legacy) or on a dedicated child
@@ -349,9 +367,12 @@ export function applyBodyText(root: Slot, color: Color, size: number): Slot {
   //     glyphs kept legible on accent chips).
   // Size only flows into "Body Text" slots — labels/captions keep their authored
   // size so a theme switch never resizes a carefully-tuned layout.
-  walk(r, () => true, (s) => {
+  walk(r, () => true, (s, parent) => {
     const txt = s.components.find((c) => c.type === "Text");
     if (!txt || isLocked(txt) || nameEquals(s, "Title")) return;
+    // The popup Dismiss button's label rides a button-contrast color (white, set
+    // by applyButtonA) — never body text, or it'd vanish on the colored pill.
+    if (parent && parent.components.some((c) => c.type === "PopupDismiss")) return;
     (txt.props as Record<string, unknown>).color = color;
     if (nameEquals(s, "Body Text")) (txt.props as Record<string, unknown>).size = size;
   });
@@ -446,10 +467,7 @@ export function applyControlSurface(root: Slot, color: Color): Slot {
     const img = s.components.find((c) => c.type === "Image");
     if (!img) return false;
     const p = img.props as Record<string, unknown>;
-    const hasSprite = !!p.customImageHash
-      || p.useHelpIcon || p.useCloseIcon || p.useCheckIcon
-      || p.useBackspaceIcon || p.useSpinnerIcon || p.useLogoSprite
-      || (typeof p.spriteUrl === "string" && /^https?:\/\//.test(p.spriteUrl as string));
+    const hasSprite = imageHasSprite(p);
     const isShape = typeof p.cornerRadius === "number" && (p.cornerRadius as number) > 0;
     if (hasSprite || isShape) return false;
     if (s.children.length > 0) return false;
@@ -486,7 +504,14 @@ export function applyControlSurface(root: Slot, color: Color): Slot {
     // tier, the same role as the header bar, so they ride controlSurface and
     // re-skin instead of staying a hardcoded dark fill on a light theme.
     const isBoard = s.name.trim().toLowerCase().endsWith(" board");
-    if (!isField && !isCheckboxBox && !isHeader && !isPlaceholder && !isPill && !isDisplay && !isPictureBand && !isBoard) return;
+    // The editable popup dialog card (a PopupContent slot floating as a centered
+    // overlay) rides controlSurface — matching how both the exporter's synthesized
+    // modal (buildPopupModalSlot, themeSurface = controlSurface) and the editable
+    // card builder (buildPopupContent, surface: theme.controlSurface) author it.
+    // Without this, a theme switch re-skins the popup's text but leaves the card
+    // stuck on whatever surface it was built under.
+    const isPopupCard = s.components.some((c) => c.type === "PopupContent");
+    if (!isField && !isCheckboxBox && !isHeader && !isPlaceholder && !isPill && !isDisplay && !isPictureBand && !isBoard && !isPopupCard) return;
     // `themeLock` pins the white login-input fields — leave their surface alone.
     if (isLocked(s.components.find((c) => c.type === "Image"))) return;
     setComponentProp(s, "Image", "tint", color);
@@ -500,11 +525,6 @@ export function applyControlSurface(root: Slot, color: Color): Slot {
     // (handled by applyBodyText).
     setComponentProp(s, "ReferenceField", "fieldColor",  color);
     setComponentProp(s, "ReferenceField", "buttonColor", color);
-    // ScrollArea's host-slot Image is painted with backgroundTint at export
-    // time, and the in-browser preview reads the same prop — keep both in
-    // sync with the controls surface so a themed panel has a coherent
-    // scrollable area background instead of stubbornly dark navy.
-    setComponentProp(s, "ScrollArea", "backgroundTint", color);
     // Radio dots that also carry a Button: keep Button state colors in sync
     // with the Image tint so hover/press feedback reads correctly on any theme.
     if (isField && s.components.some((c) => c.type === "Radio") && s.components.some((c) => c.type === "Button")) {
@@ -522,6 +542,54 @@ export function applyControlSurface(root: Slot, color: Color): Slot {
   // surface tier as every other control.
   walk(r, () => true, (s) => {
     setComponentProp(s, "Dropdown", "optionFillColor", color);
+  });
+  return r;
+}
+
+// Push the "container surface" onto the raised panel tiers that HOLD other
+// controls: a Tabs group's content page + active tab, and a ScrollArea's
+// background. The inactive tabs + tab frame are derived by darkening (recede),
+// so one theme token drives the whole tabbed/scroll look coherently. Controls
+// nested inside keep riding controlSurface (recessed wells against this raised
+// surface). Matched by component marker so user-renamed slots still theme.
+export function applyContainerSurface(root: Slot, color: Color): Slot {
+  const r = clone(root);
+  const inactive = lighten(color, -0.045); // recessed (unselected) tab
+  const frame = lighten(color, -0.09);     // the card the whole group sits on
+  // Tabs hosts: re-color the frame Image, every page Image, each tab button (by
+  // selection), and the Tabs component's own color props (so applyActiveTab /
+  // re-render stay consistent).
+  walk(r, (s) => s.components.some((c) => c.type === "Tabs"), (host) => {
+    if (isLocked(host.components.find((c) => c.type === "Image"))) return;
+    const tabs = host.components.find((c) => c.type === "Tabs")!;
+    const tp = tabs.props as Record<string, unknown>;
+    tp.pageColor = color;
+    tp.activeColor = color;
+    tp.inactiveColor = inactive;
+    tp.frameColor = frame;
+    setComponentProp(host, "Image", "tint", frame);
+    for (const pg of host.children.filter((ch) => ch.components.some((c) => c.type === "TabPage"))) {
+      setComponentProp(pg, "Image", "tint", color);
+    }
+    const bar = host.children.find((ch) => ch.children.some((g) => g.components.some((c) => c.type === "TabButton")));
+    if (bar) {
+      const buttons = bar.children.filter((g) => g.components.some((c) => c.type === "TabButton"));
+      const activeIdx = Math.max(0, Math.min(buttons.length - 1, ((tp.activeTab as number) ?? 0) | 0));
+      buttons.forEach((b, i) => {
+        const tint = i === activeIdx ? color : inactive;
+        setComponentProp(b, "Image", "tint", tint);
+        setComponentProp(b, "Button", "normalColor", tint);
+        setComponentProp(b, "Button", "highlightColor", lighten(tint, 0.10));
+        setComponentProp(b, "Button", "pressColor", lighten(tint, -0.08));
+      });
+    }
+  });
+  // ScrollArea backgrounds — the host-slot Image is painted with backgroundTint
+  // at export time and the preview reads the same prop; keep both in sync.
+  walk(r, (s) => s.components.some((c) => c.type === "ScrollArea"), (s) => {
+    if (isLocked(s.components.find((c) => c.type === "Image"))) return;
+    setComponentProp(s, "ScrollArea", "backgroundTint", color);
+    setComponentProp(s, "Image", "tint", color);
   });
   return r;
 }
@@ -555,6 +623,23 @@ export function applyButtonA(root: Slot, color: Color): Slot {
   // staying a hardcoded brand color; a user-set `themeLock` pins it.
   const highlight = lighten(color, 0.12);
   const press = lighten(color, -0.12);
+  const disabled = { r: 0.3, g: 0.3, b: 0.3, a: color.a };
+  // The editable popup dialog's Dismiss button is the modal's primary action —
+  // same role as the synthesized modal's OK button (themeButtonA). Theme its
+  // Image + Button states to buttonA, and pin its label white so it stays legible
+  // on the colored pill (applyBodyText would otherwise drag it to body text).
+  walk(r, (s) => s.components.some((c) => c.type === "PopupDismiss"), (s) => {
+    if (isLocked(s.components.find((c) => c.type === "Image"))) return;
+    setComponentProp(s, "Image", "tint", color);
+    setComponentProp(s, "Button", "normalColor", color);
+    setComponentProp(s, "Button", "highlightColor", highlight);
+    setComponentProp(s, "Button", "pressColor", press);
+    setComponentProp(s, "Button", "disabledColor", disabled);
+    const label = s.children.find((ch) => nameEquals(ch, "Label"));
+    if (label && !isLocked(label.components.find((c) => c.type === "Text"))) {
+      setComponentProp(label, "Text", "color", { r: 1, g: 1, b: 1, a: 1 });
+    }
+  });
   walk(r, (s) => s.components.some((c) => c.type === "ColorPicker"), (s) => {
     const cp = s.components.find((c) => c.type === "ColorPicker");
     if (isLocked(cp) || isLocked(s.components.find((c) => c.type === "Image"))) return;
@@ -685,6 +770,7 @@ export function applyAll(root: Slot, theme: Theme): Slot {
   r = applyBodyText(r, theme.bodyTextColor, theme.bodyTextSize);
   r = applyAccent(r, theme.accent);
   r = applyControlSurface(r, theme.controlSurface);
+  r = applyContainerSurface(r, theme.containerSurface);
   r = applyButtonA(r, theme.buttonA);
   r = applyButtonB(r, theme.buttonB);
   // Corner radius is intentionally NOT applied here — see applyCornerRadius.

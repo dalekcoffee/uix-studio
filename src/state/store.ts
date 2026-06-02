@@ -15,20 +15,52 @@ import {
   renameSlot,
   scaleSlotTree,
   setCanvasSize,
+  setLabelPositionField,
+  setSlotChildren,
   toggleLock,
   updateComponentProp,
 } from "../model/operations";
+import {
+  buildRadials,
+  type LabelPosition as RadioLabelPosition,
+  type Orientation as RadioOrientation,
+} from "../editor/render/radioLayout";
 import { isStructuralSlot } from "../model/structural";
-import { LABELLED_CONTROL_TYPES, controlLabelText } from "../model/controlName";
+import { DEFAULT_CONTENT_PADDING, resolvePad } from "../model/padding";
+import {
+  LABELLED_CONTROL_TYPES,
+  STRETCHY_CONTROL_TYPES,
+  controlLabelText,
+  labelPositionOf,
+  type LabelPosition,
+} from "../model/controlName";
 import { measureLabelWidth } from "../editor/textMeasure";
-import { contentMinWidth, SNAP_GAP } from "../editor/render/contentMin";
+import { contentMinWidth, compositeResizeMinWidth, compositeRefitInfo, SNAP_GAP } from "../editor/render/contentMin";
+import { computeCompositeLayout, DEFAULT_CONTROL_WIDTH, type RTRect } from "../editor/render/compositeLayout";
+import { getLayoutKind } from "../editor/render/layoutEngine";
 import { INTERACTIVITY_COMPONENTS, isSlotClickable } from "../model/clickable";
 import { createStarterTemplate } from "../model/template";
+import { getInitialLanguage, writeLanguage } from "../io/languagePref";
+import type { Lang } from "../locale/types";
+import { localizePanelText } from "../locale/presetText";
 import { applyButtonPreset, type ButtonPresetId } from "../model/buttonPresets";
 import { findPreset } from "../model/presets";
 import { findBackgroundSlots, buildBackgroundTrio } from "../model/background";
 import { SYSTEM_ICON_FLAGS } from "../model/systemIcons";
 import { buildWidget, buildPopupContent, buildColumn, isWidgetType } from "../model/widgets";
+import {
+  applyActiveTab,
+  retintTabs,
+  addTab as addTabTree,
+  removeTab as removeTabTree,
+  moveTab as moveTabTree,
+  setTabLabel as setTabLabelTree,
+  setTabsPosition as setTabsPositionTree,
+  tabsPositionOf,
+  isTabsHost,
+  activeTabPageId,
+  type TabPosition,
+} from "../model/tabs";
 import type { PaletteItem } from "../model/palette";
 import {
   applyAccent,
@@ -39,6 +71,7 @@ import {
   applyButtonA,
   applyButtonB,
   applyControlSurface,
+  applyContainerSurface,
   applyCornerRadius,
   applyHeaderText,
   applyPreset as applyThemePresetValues,
@@ -48,11 +81,14 @@ import {
 } from "../model/theme";
 import { APP_VERSION } from "../version";
 import { computeAbsoluteRect, isLayoutManaged, rectToOffsets } from "../editor/render/slotRect";
+import { rowBandFor, type RowBand } from "../editor/render/alignAvail";
 import { computeChildRect, getRectTransform, type Rect } from "../editor/render/rectTransform";
 import {
+  containerRows,
   findContainer,
   getContainers,
   groupRows,
+  inferSideMargin,
   planFlow,
   reflowAbsolute,
   reflowLayoutOrder,
@@ -78,6 +114,48 @@ const APPEND_GAP = 16;
 // flow, canvas auto-sizing, and resize re-anchoring.
 function isPopupContentSlot(slot: Slot): boolean {
   return slot.components.some((c) => c.type === "PopupContent");
+}
+
+// The panel's Canvas.contentPadding (px). Source for nested container padding,
+// which inherits HALF this when left on the -1 "auto" sentinel (see resolvePad).
+function canvasContentPad(root: Slot): number {
+  const cc = root.components.find((c) => c.type === "Canvas");
+  return ((cc?.props as { contentPadding?: number } | undefined)?.contentPadding) ?? DEFAULT_CONTENT_PADDING;
+}
+
+// Enforce the canvas content margin on SNAP-mode top-level content: ensure every
+// WIDE, full-stretch body element keeps a left/right margin of at least
+// Canvas.contentPadding. It only ever pushes a side INWARD (never reduces a
+// larger intentional inset), so compliant elements — and designed alignments like
+// the checklist's two lists (24px), which already exceed the 16px margin — are
+// untouched. Exempt: structural chrome, popup cards, full-bleed bars (header/
+// footer, flush to an edge), and narrow corner chrome (help/close buttons).
+// Returns the same root ref when nothing moves. Applied on snap preset load and
+// in autoArrange (covers free→snap swaps + the Auto-arrange button).
+function enforceCanvasMargins(root: Slot): Slot {
+  const canvas = root.components.find((c) => c.type === "Canvas");
+  const W = (canvas?.props as { sizeX?: number } | undefined)?.sizeX ?? 800;
+  const Hh = (canvas?.props as { sizeY?: number } | undefined)?.sizeY ?? 600;
+  const cp = canvasContentPad(root);
+  const parent: Rect = { x: 0, y: 0, w: W, h: Hh };
+  let next = root;
+  for (const c of root.children) {
+    if (isStructuralSlot(c) || isPopupContentSlot(c)) continue;
+    const rt = getRectTransform(c);
+    const fullStretchX =
+      Math.abs(rt.anchorMin.x) < 0.01 && Math.abs(rt.anchorMax.x - 1) < 0.01;
+    if (!fullStretchX) continue;
+    if (rt.offsetMin.x <= 1) continue; // flush-to-edge bar/chrome — keep its edges
+    if (computeChildRect(parent, rt).w < 0.55 * W) continue; // narrow chrome — exempt
+    // Clamp each side to a minimum margin of cp; never reduce a larger inset.
+    const newMinX = Math.max(rt.offsetMin.x, cp);
+    const newMaxX = Math.min(rt.offsetMax.x, -cp);
+    if (newMinX !== rt.offsetMin.x)
+      next = updateComponentProp(next, c.id, "RectTransform", "offsetMin", { ...rt.offsetMin, x: newMinX });
+    if (newMaxX !== rt.offsetMax.x)
+      next = updateComponentProp(next, c.id, "RectTransform", "offsetMax", { ...rt.offsetMax, x: newMaxX });
+  }
+  return next;
 }
 
 // Size every "Column" to its CONTENT height: sum of its children's preferred
@@ -230,9 +308,28 @@ export interface SnapSettings {
 interface State {
   root: Slot;
   selectedSlotId: string | null;
-  history: Slot[];
-  future: Slot[];
+  // The popup trigger (host) whose dialog card is currently open in the floating
+  // edit surface, or null. Editing the popup is an EXPLICIT mode entered via the
+  // Inspector's "Edit popup" button — NOT a side effect of selecting the trigger
+  // (so the trigger button itself stays selectable/resizable). Cleared by closing
+  // the surface or selecting something outside the popup.
+  editingPopupId: string | null;
+  // Each undo frame snapshots BOTH the tree and the theme, so undoing a theme
+  // edit restores the Theme menu's values in lockstep with the re-tinted slots
+  // (otherwise the canvas reverts but the menu still shows the new preset).
+  history: Snapshot[];
+  future: Snapshot[];
   _preDragRoot: Slot | null;
+  // Transient: the Tabs host whose active tab was switched by the *immediately
+  // preceding* action. Lets consecutive tab-view switches coalesce into ONE undo
+  // step (browsing tabs shouldn't flood history). Any real commit clears it.
+  _lastTabSwitchHost: string | null;
+  // Transient: identifies the field whose value was set by the *immediately
+  // preceding* setProp/setProps. While a run of edits keeps hitting the same
+  // field (typing in a text box, dragging a slider), they coalesce into ONE undo
+  // step instead of one-per-keystroke. Any structural edit / undo / redo / select
+  // clears it so the next field edit starts a fresh step.
+  _lastEditKey: string | null;
   collapsed: Record<string, boolean>;
   viewport: ViewportTransform;
   snap: SnapSettings;
@@ -270,6 +367,14 @@ interface State {
   showOverlays: boolean;
   leftPanelHidden: boolean;
   rightPanelHidden: boolean;
+  // Whether the "What's New" patch-notes modal is open. Lifted to the store so
+  // any surface (toolbar version, Help menu) can open the single shared modal.
+  whatsNewOpen: boolean;
+  // Selected UI language. UI-only preference: it is NOT part of the document,
+  // undo history, or export — it only drives which translation dictionary the
+  // editor chrome renders (and which language fresh templates/presets generate
+  // their text in). Persisted separately via io/languagePref.ts.
+  language: Lang;
   contextMenu: { x: number; y: number; slotId: string | null } | null;
   // When set, the HierarchyTree row for this slot opens its inline rename editor
   // (the same one double-click uses). Lets the context-menu "Rename" action
@@ -285,6 +390,11 @@ interface State {
 
 interface Actions {
   select: (id: string | null) => void;
+  // Open a popup trigger's dialog card in the floating edit surface (builds the
+  // card first if needed). Entered explicitly from the Inspector.
+  editPopup: (hostId: string) => void;
+  // Close the popup edit surface (leaves the current selection untouched).
+  closePopupEdit: () => void;
   addChild: (parentId: string) => void;
   remove: (id: string) => void;
   duplicate: (id: string) => void;
@@ -350,8 +460,56 @@ interface Actions {
   applyButtonPreset: (slotId: string, preset: ButtonPresetId) => void;
   setProp: (slotId: string, type: UixComponentType, key: string, value: unknown) => void;
   setProps: (slotId: string, type: UixComponentType, entries: [string, unknown][]) => void;
+  // Canvas-level side padding. Bakes the new left/right inset into every
+  // top-level body slot's RectTransform (full-bleed bars + structural chrome
+  // exempt) and stores the value on the Canvas component. Also the source for
+  // nested container padding (which inherits half). Undoable.
+  setContentPadding: (padding: number) => void;
+  // Tabs editing — driven by the custom Tabs Inspector + click-to-switch canvas
+  // routing (see src/model/tabs.ts). hostId is the Tabs host slot; index is the
+  // positional tab index.
+  setActiveTab: (hostId: string, index: number) => void;
+  selectTab: (hostId: string, index: number) => void;
+  setTabLabel: (hostId: string, index: number, text: string) => void;
+  addTab: (hostId: string) => void;
+  removeTab: (hostId: string, index: number) => void;
+  moveTab: (hostId: string, index: number, dir: number) => void;
+  // Regenerate a radial group's option ring/label slots from an edited list +
+  // per-option label position + row/column orientation. The list IS the source
+  // of truth (no hand-building option slots); the group row resizes to fit.
+  setRadioOptions: (
+    groupSlotId: string,
+    labels: string[],
+    labelPosition: RadioLabelPosition,
+    orientation: RadioOrientation,
+    initialIndex: number,
+  ) => void;
+  // Move the tab bar to the top / bottom / left / right of the tabbed group.
+  setTabsPosition: (hostId: string, position: TabPosition) => void;
+  // Edit a Tabs "Appearance" prop (size or color) AND re-apply it to the live
+  // preview: size keys re-lay the bar/pages, color keys re-tint the surfaces, so
+  // the panel reflects the change immediately (and stays consistent with export).
+  setTabsAppearance: (hostId: string, key: string, value: unknown) => void;
   dragStart: () => void;
   dragApply: (slotId: string, offsetMin: Vec2, offsetMax: Vec2) => void;
+  // Re-anchor a labeled composite's internals for a given control width: the
+  // control shrinks to `controlWidth` (right-anchored) and the label hugs the
+  // remaining space (left), so the label never clips as the wrapper shrinks.
+  // Live (off the current root, no history) — paired with dragApply during a
+  // resize and folded into the same dragCommit.
+  refitComposite: (slotId: string, controlWidth: number) => void;
+  // Move a labelled composite's label to the left of, or above, its control.
+  // Re-lays the internals, resizes the wrapper height (top grows it downward),
+  // and reflows the container so siblings shift. Undoable.
+  setLabelPosition: (slotId: string, pos: LabelPosition) => void;
+  // Resize a LAYOUT-managed element (a scroll-area / layout row, whose position
+  // is owned by the layout so RT offsets are ignored) by writing its
+  // LayoutElement preferred size. Live (no history) — folded into dragCommit.
+  setLayoutSize: (slotId: string, w: number, h: number) => void;
+  // When a container (ScrollArea / Tabs / layout) is resized, cascade the
+  // control-shrink to every composite it holds (the label stays full, the input
+  // shrinks) so they don't clip. Live (no history) — folded into dragCommit.
+  refitContainerComposites: (containerId: string) => void;
   dragCommit: () => void;
   // Commit a snap-mode in-row horizontal nudge: place the element at `target`
   // and pin it horizontally (collapse anchors to its centre fraction, like
@@ -392,6 +550,12 @@ interface Actions {
   // reorder. Always reflows from _preDragRoot so repeated moves don't compound.
   // Bracket with dragStart()/dragCommit() for one undo step.
   reflowLive: (containerId: string, result: ReflowResult) => void;
+  // Re-stack a container from the CURRENT (live) tree — used after a snap-mode
+  // free resize/move so the new size can't leave the element overlapping its
+  // siblings. Unlike reflowLive (which reflows from the pre-drag snapshot), this
+  // reads the post-resize sizes. Live (set root, no history); the caller's
+  // dragCommit folds it into one undo step.
+  reflowContainerNow: (containerId: string) => void;
   // Cross-container flow drop: reparent the dragged element(s) into
   // targetContainerId at the given drop, then reflow BOTH the target and the
   // source container so each lays out cleanly. Live (off _preDragRoot) — bracket
@@ -434,6 +598,10 @@ interface Actions {
   toggleOverlays: () => void;
   toggleLeftPanel: () => void;
   toggleRightPanel: () => void;
+  setWhatsNewOpen: (open: boolean) => void;
+  // Switch the UI language. Persists the choice and re-renders the chrome; does
+  // NOT touch the open document (so it never clobbers user edits or undo).
+  setLanguage: (lang: Lang) => void;
   openContextMenu: (x: number, y: number, slotId: string | null) => void;
   closeContextMenu: () => void;
   // Theme actions. setTheme stores values without touching the tree;
@@ -447,10 +615,24 @@ interface Actions {
   applyThemeBodyText: () => void;
   applyThemeAccent: () => void;
   applyThemeControlSurface: () => void;
+  applyThemeContainerSurface: () => void;
   applyThemeButtonA: () => void;
   applyThemeButtonB: () => void;
   applyThemeCornerRadius: () => void;
   applyBranding: () => void;
+}
+
+// Returns `id` only if it still resolves to a slot in `root`; otherwise null.
+// Used after undo/redo (and structural removes) to drop selections / popup-edit
+// bindings that point at a slot the operation deleted.
+function validSelection(root: Slot, id: string | null): string | null {
+  return id && findSlot(root, id) ? id : null;
+}
+
+// One undo/redo frame: the tree plus the theme values that produced it.
+interface Snapshot {
+  root: Slot;
+  theme: Theme;
 }
 
 const HISTORY_LIMIT = 100;
@@ -458,12 +640,63 @@ const DEFAULT_VIEWPORT: ViewportTransform = { zoom: 1, panX: 0, panY: 0 };
 
 export const useStore = create<State & Actions>((set, get) => {
   function commit(next: Slot) {
-    set((s) => ({
-      history: [...s.history, s.root].slice(-HISTORY_LIMIT),
-      future: [],
-      root: next,
-      dirty: true,
-    }));
+    set((s) => {
+      // No-op edit (op returned the same root ref): don't pollute history with an
+      // empty undo step or flip the dirty flag. Covers add-already-present,
+      // rename-to-same, set-same-value, etc.
+      if (next === s.root) return {};
+      return {
+        history: [...s.history, { root: s.root, theme: s.theme }].slice(-HISTORY_LIMIT),
+        future: [],
+        root: next,
+        dirty: true,
+        // A genuine structural edit ends any run of coalesced tab-view switches
+        // AND any run of coalesced single-field / theme edits.
+        _lastTabSwitchHost: null,
+        _lastEditKey: null,
+      };
+    });
+  }
+
+  // Like commit, but coalesces consecutive edits to the SAME field into one undo
+  // step. The first edit in a run snapshots history; subsequent edits to the same
+  // editKey replace the root in place (so one Ctrl+Z reverts the whole edit, not a
+  // single keystroke / slider tick). Mirrors the tab-switch coalescing pattern.
+  function commitField(next: Slot, editKey: string) {
+    set((s) => {
+      if (next === s.root) return {};
+      const coalesce = s._lastEditKey === editKey;
+      return {
+        history: coalesce
+          ? s.history
+          : [...s.history, { root: s.root, theme: s.theme }].slice(-HISTORY_LIMIT),
+        future: [],
+        root: next,
+        dirty: true,
+        _lastTabSwitchHost: null,
+        _lastEditKey: editKey,
+      };
+    });
+  }
+
+  // Commits a theme edit (and any tree re-tint it produced). Coalesces a run of
+  // theme tweaks into ONE undo step (the Theme menu live-applies on every color
+  // drag), snapshotting the PRE-run root+theme so a single undo restores both.
+  function commitTheme(nextRoot: Slot, nextTheme: Theme) {
+    set((s) => {
+      const coalesce = s._lastEditKey === "theme";
+      return {
+        history: coalesce
+          ? s.history
+          : [...s.history, { root: s.root, theme: s.theme }].slice(-HISTORY_LIMIT),
+        future: [],
+        root: nextRoot,
+        theme: nextTheme,
+        dirty: true,
+        _lastTabSwitchHost: null,
+        _lastEditKey: "theme",
+      };
+    });
   }
 
   // The Canvas slot owns the panel-wide setup (Canvas + RectTransform +
@@ -545,7 +778,13 @@ export const useStore = create<State & Actions>((set, get) => {
             ? fitH // grow only
             : canvasSize.h;
       if (targetH !== canvasSize.h) next = setCanvasSize(next, canvasSize.w, targetH);
-      const parentAbs = { ...container.absRect, h: targetH };
+      // Offsets must be solved against the PARENT's height. For the root that's
+      // the (possibly just-resized) canvas height; for a NESTED container it's
+      // the container's OWN height — using the canvas height here solved every
+      // nested child's Y against a 1500px-tall parent while it actually lives in
+      // a ~360px page, flinging freshly-added (center-anchored) elements far
+      // off-page (the add-into-tab / add-into-popup bug). Global fix.
+      const parentAbs = { ...container.absRect, h: container.isRoot ? targetH : container.absRect.h };
       for (const id of Object.keys(result.rects)) {
         const slot = findSlot(next, id);
         const target = result.rects[id];
@@ -576,6 +815,15 @@ export const useStore = create<State & Actions>((set, get) => {
   // restored. Only the simple "Label + one control" shape is handled; multi-part
   // composites (Radio Group, keypad) are left untouched. Deterministic from the
   // control's width + measured label text, so it's idempotent and reversible.
+  // Write a full RectTransform (anchors + offsets) onto a slot in one shot.
+  function applyRT(root: Slot, slotId: string, rt: RTRect): Slot {
+    let r = updateComponentProp(root, slotId, "RectTransform", "anchorMin", rt.anchorMin);
+    r = updateComponentProp(r, slotId, "RectTransform", "anchorMax", rt.anchorMax);
+    r = updateComponentProp(r, slotId, "RectTransform", "offsetMin", rt.offsetMin);
+    r = updateComponentProp(r, slotId, "RectTransform", "offsetMax", rt.offsetMax);
+    return r;
+  }
+
   function reanchorLabeledComposite(root: Slot, slotId: string, packed: boolean): Slot {
     const slot = findSlot(root, slotId);
     if (!slot || !LABELLED_CONTROL_TYPES.has(slot.name)) return root;
@@ -587,10 +835,22 @@ export const useStore = create<State & Actions>((set, get) => {
     if (controls.length !== 1) return root; // skip multi-part composites
     const crt = getRectTransform(controls[0]);
     const controlW = Math.abs((crt.offsetMax?.x ?? 0) - (crt.offsetMin?.x ?? 0));
-    if (controlW <= 0) return root;
-    const lrt = getRectTransform(label);
+    const controlH = Math.abs((crt.offsetMax?.y ?? 0) - (crt.offsetMin?.y ?? 0));
     const fontPx = (label.components.find((k) => k.type === "Text")?.props as { size?: number } | undefined)?.size ?? 14;
     const labelW = measureLabelWidth(controlLabelText(slot), fontPx);
+    // Top-labelled: re-apply the deterministic stacked layout (label band + the
+    // control below). A stretchy control's width is dynamic (anchored full-width
+    // → offset width reads 0), so fall back to its authored default.
+    if (labelPositionOf(slot) === "top") {
+      const stretchy = STRETCHY_CONTROL_TYPES.has(slot.name);
+      const cw = controlW || DEFAULT_CONTROL_WIDTH[slot.name] || 80;
+      const layout = computeCompositeLayout("top", { stretchy, controlW: cw, controlH, labelW, packed });
+      let r = applyRT(root, label.id, layout.label);
+      r = applyRT(r, controls[0].id, layout.control);
+      return r;
+    }
+    if (controlW <= 0) return root;
+    const lrt = getRectTransform(label);
     const reserve = controlW + SNAP_GAP;
     const aMin = { x: packed && labelW > 0 ? 1 : 0, y: lrt.anchorMin.y };
     const aMax = { x: 1, y: lrt.anchorMax.y };
@@ -717,6 +977,152 @@ export const useStore = create<State & Actions>((set, get) => {
     return applyResultToContainer(root, rootC, result, canvasSize);
   }
 
+  // Pure re-stack of one absolute/layout container's children (the snap reflow for
+  // a single container). Returns the new tree; `reflowContainerNow` wraps it in a
+  // set(), and folded-edit paths (e.g. setTabsAppearance pagePadding) call it
+  // directly so the reflow lands in the SAME commit as the edit (one undo step,
+  // one render) instead of a trailing non-history set().
+  function reflowContainerTree(root: Slot, containerId: string): Slot {
+    const canvasSize = canvasSizeOf(root);
+    const container = findContainer(root, containerId, canvasSize);
+    if (!container) return root;
+    const items = rowItemsOf(root, container, canvasSize);
+    if (items.length === 0) return root;
+    const rows = groupRows(items);
+    const rowItems: Record<string, Rect> = {};
+    for (const it of items) rowItems[it.id] = it.rect;
+    const cSlot = findSlot(root, container.id);
+    const tabPad =
+      cSlot?.components.some((c) => c.type === "TabPage")
+        ? resolvePad(
+            (findParent(root, container.id)?.components.find((c) => c.type === "Tabs")
+              ?.props as { pagePadding?: number } | undefined)?.pagePadding,
+            canvasContentPad(root),
+          )
+        : 0;
+    const bounds = {
+      left: container.absRect.x + tabPad,
+      right: container.absRect.x + container.absRect.w - tabPad,
+    };
+    const result =
+      container.strategy === "absolute"
+        ? reflowAbsolute(rows, rowItems, {
+            rowGap: get().snap.rowGap,
+            colGap: get().snap.colGap,
+            anchorY: rows[0].top,
+            bottomMargin: APPEND_MARGIN,
+            bounds,
+            minWidths: minWidthsFor(root, container, canvasSize),
+          })
+        : reflowLayoutOrder(rows);
+    if (container.strategy === "absolute" && result.rects) {
+      for (const id of Object.keys(result.rects)) {
+        const member = findSlot(root, id);
+        const minW = member ? compositeResizeMinWidth(member) : null;
+        const rc = result.rects[id];
+        if (minW && rc && rc.w < minW) {
+          let x = rc.x;
+          if (x + minW > bounds.right) x = bounds.right - minW;
+          if (x < bounds.left) x = bounds.left;
+          result.rects[id] = { ...rc, x, w: minW };
+        }
+      }
+    }
+    return fitTabsToContent(applyResultToContainer(root, container, result, canvasSize));
+  }
+
+  // A Tabs container has no scroll, so when content is added/moved/resized inside
+  // a tab it must GROW to fit (unlike a ScrollArea, which scrolls). Sizes every
+  // Tabs host's height to its tallest page's content (all pages share the rect,
+  // so any tab's content can drive the height), then re-stacks the canvas so the
+  // rows below the now-taller Tabs are pushed down and the canvas grows. Grow-only.
+  function fitTabsToContent(root: Slot): Slot {
+    const canvasSize = canvasSizeOf(root);
+    const hosts: Slot[] = [];
+    (function walk(s: Slot) {
+      if (s.components.some((c) => c.type === "Tabs")) hosts.push(s);
+      for (const c of s.children) walk(c);
+    })(root);
+    let next = root;
+    let changed = false;
+    for (const host of hosts) {
+      const tabsComp = host.components.find((c) => c.type === "Tabs");
+      const pad = resolvePad((tabsComp?.props as { pagePadding?: number })?.pagePadding, canvasContentPad(root));
+      const hostRect = computeAbsoluteRect(next, host.id, canvasSize);
+      if (!hostRect) continue;
+      const pages = host.children.filter((p) => p.components.some((c) => c.type === "TabPage"));
+      let contentBottom = hostRect.y;
+      for (const page of pages)
+        for (const child of page.children) {
+          const cr = computeAbsoluteRect(next, child.id, canvasSize);
+          if (cr) contentBottom = Math.max(contentBottom, cr.y + cr.h);
+        }
+      const neededH = Math.ceil(contentBottom - hostRect.y + pad + 6);
+      if (neededH > hostRect.h + 0.5) {
+        const parent = findParent(next, host.id);
+        const parentRect =
+          (parent ? computeAbsoluteRect(next, parent.id, canvasSize) : null) ??
+          { x: 0, y: 0, w: canvasSize.w, h: canvasSize.h };
+        const rt = getRectTransform(host);
+        const { offsetMin, offsetMax } = rectToOffsets(
+          { x: hostRect.x, y: hostRect.y, w: hostRect.w, h: neededH },
+          parentRect,
+          rt.anchorMin,
+          rt.anchorMax,
+        );
+        next = updateComponentProp(next, host.id, "RectTransform", "offsetMin", offsetMin);
+        next = updateComponentProp(next, host.id, "RectTransform", "offsetMax", offsetMax);
+        changed = true;
+      }
+    }
+    return changed ? snapReflowRoot(next) : root;
+  }
+
+  // Place a freshly-added child at the BOTTOM of an ABSOLUTE nested container
+  // (a tab page / popup card), full-width and top-anchored — the same shape the
+  // container's authored rows use, so it stacks cleanly below its siblings.
+  // Without this the widget keeps its centered builder default, and the reflow
+  // (which only re-stacks vertically) leaves it floating mid-page / off to the
+  // side. No-op for the root (handled by appendChildAtBottom) and for LAYOUT
+  // containers (a ScrollArea positions children by order, not RT). Tab-page
+  // content insets by the Tabs' pagePadding; other absolute containers use a
+  // standard 16px gutter.
+  function placeChildAtAbsoluteContainerBottom(root: Slot, containerId: string, childId: string): Slot {
+    const container = findSlot(root, containerId);
+    if (!container || getLayoutKind(container) !== null) return root; // layout container → skip
+    const cs = canvasSizeOf(root);
+    const cRect = computeAbsoluteRect(root, containerId, cs);
+    const child = findSlot(root, childId);
+    if (!cRect || !child) return root;
+    const isTabPage = container.components.some((c) => c.type === "TabPage");
+    const host = isTabPage ? findParent(root, containerId) : null;
+    const pad = isTabPage
+      ? resolvePad((host?.components.find((c) => c.type === "Tabs")?.props as { pagePadding?: number } | undefined)?.pagePadding, canvasContentPad(root))
+      : 16;
+    let bottom = cRect.y + pad;
+    for (const sib of container.children) {
+      if (sib.id === childId || isStructuralSlot(sib)) continue;
+      const r = computeAbsoluteRect(root, sib.id, cs);
+      if (r) bottom = Math.max(bottom, r.y + r.h);
+    }
+    const childRect = computeAbsoluteRect(root, childId, cs);
+    const target = {
+      x: cRect.x + pad,
+      y: bottom + APPEND_GAP,
+      w: Math.max(8, cRect.w - 2 * pad),
+      h: childRect?.h ?? 40,
+    };
+    // Full-width, top-anchored (matches the container's authored rows).
+    const aMin = { x: 0, y: 1 };
+    const aMax = { x: 1, y: 1 };
+    const { offsetMin, offsetMax } = rectToOffsets(target, cRect, aMin, aMax);
+    let r = updateComponentProp(root, childId, "RectTransform", "anchorMin", aMin);
+    r = updateComponentProp(r, childId, "RectTransform", "anchorMax", aMax);
+    r = updateComponentProp(r, childId, "RectTransform", "offsetMin", offsetMin);
+    r = updateComponentProp(r, childId, "RectTransform", "offsetMax", offsetMax);
+    return r;
+  }
+
   // Re-stack the Canvas root after a top-level DUPLICATE so the copy sits
   // directly below the original — never on top of it and never merged side-by-side
   // with whatever element happened to sit just below.
@@ -772,13 +1178,19 @@ export const useStore = create<State & Actions>((set, get) => {
     return map;
   }
 
-  const initialRoot = lockRoot(createStarterTemplate());
+  // Read the persisted/guessed language synchronously so the very first render
+  // and the first-load starter template are already in the right language.
+  const initialLanguage = getInitialLanguage();
+  const initialRoot = lockRoot(createStarterTemplate(initialLanguage));
   return {
     root: initialRoot,
     selectedSlotId: null,
+    editingPopupId: null,
     history: [],
     future: [],
     _preDragRoot: null,
+    _lastTabSwitchHost: null,
+    _lastEditKey: null,
     collapsed: defaultCollapsed(initialRoot),
     viewport: { ...DEFAULT_VIEWPORT },
     snap: { enabled: false, size: 8, rowGap: 12, colGap: 12 },
@@ -790,12 +1202,38 @@ export const useStore = create<State & Actions>((set, get) => {
     showOverlays: true,
     leftPanelHidden: false,
     rightPanelHidden: false,
+    whatsNewOpen: false,
+    language: initialLanguage,
     contextMenu: null,
     renamingSlotId: null,
     theme: defaultTheme(),
     dirty: false,
 
-    select: (id) => set({ selectedSlotId: id }),
+    select: (id) =>
+      set((s) => {
+        // Leaving the popup being edited (selecting anything that isn't the
+        // trigger, its card, or something inside the card) closes the edit
+        // surface — so the modal editor never lingers over an unrelated element.
+        if (!s.editingPopupId || id === s.editingPopupId)
+          return { selectedSlotId: id, _lastEditKey: null };
+        const host = findSlot(s.root, s.editingPopupId);
+        const cid = (host?.components.find((c) => c.type === "Popup")?.props as
+          | { contentSlotId?: string }
+          | undefined)?.contentSlotId;
+        const insideCard =
+          !!cid && id != null && (id === cid || isDescendant(s.root, cid, id));
+        return insideCard
+          ? { selectedSlotId: id, _lastEditKey: null }
+          : { selectedSlotId: id, editingPopupId: null, _lastEditKey: null };
+      }),
+
+    editPopup: (hostId) => {
+      // Build the dialog card if it doesn't exist yet, then open the surface.
+      get().ensurePopupContent(hostId);
+      set({ editingPopupId: hostId, selectedSlotId: hostId });
+    },
+
+    closePopupEdit: () => set({ editingPopupId: null }),
 
     addChild: (parentId) => {
       const child = newSlot("Slot");
@@ -821,7 +1259,13 @@ export const useStore = create<State & Actions>((set, get) => {
       { const s = findSlot(get().root, id); if (s && isStructuralSlot(s)) return; }
       const next = removeSlot(get().root, id);
       commit(next);
-      if (get().selectedSlotId === id) set({ selectedSlotId: null });
+      // Drop selection / popup-edit binding if they referenced the deleted slot
+      // (or, for the popup, a slot now gone from the tree) so neither the
+      // Inspector nor the floating popup surface lingers over a ghost.
+      const patch: Partial<State> = {};
+      if (get().selectedSlotId === id) patch.selectedSlotId = null;
+      patch.editingPopupId = validSelection(next, get().editingPopupId);
+      set(patch);
     },
 
     duplicate: (id) => {
@@ -850,6 +1294,20 @@ export const useStore = create<State & Actions>((set, get) => {
       const parent = findParent(r, id);
       if (!slot || !parent) return;
       if (isLayoutManaged(r, id)) return;
+      // In snap mode the block-flow engine owns each element's VERTICAL position
+      // (stacking order, row bands), so Top/Middle/Bottom are no-ops. The one
+      // meaningful vertical op is Stretch = "fill my row's height": grow a short
+      // element to match its tallest row sibling (the dead space beside a taller
+      // column). It only applies when the element actually shares a row with a
+      // taller sibling — otherwise (alone in its row, or already tallest) bail.
+      const snapMode = get().editMode === "snap";
+      let snapFill: RowBand | null = null;
+      if (snapMode && axis === "v") {
+        if (mode !== "stretch") return;
+        snapFill = rowBandFor(r, id);
+        if (!snapFill || snapFill.memberCount <= 1 || snapFill.self.h >= snapFill.band.h - 1)
+          return;
+      }
       const canvasComp = r.components.find((c) => c.type === "Canvas");
       const cp = canvasComp?.props as { sizeX?: number; sizeY?: number } | undefined;
       const canvasSize = { w: cp?.sizeX ?? 800, h: cp?.sizeY ?? 600 };
@@ -861,36 +1319,67 @@ export const useStore = create<State & Actions>((set, get) => {
       const newAnchorMax = { ...rt.anchorMax };
       const newRect = { ...slotAbs };
 
+      // In snap mode an aligned element must respect the same side gutter the
+      // snap layout gives its siblings — otherwise it goes flush to the parent
+      // edges and breaks the tidy margin (the bug this guards against). Applies
+      // to BOTH stretch and the edge alignments (Left/Right/Top/Bottom); Center/
+      // Middle are dead-centered so they need no margin. Inferred from the OTHER
+      // full-width rows in the same container (excluding this element); free mode
+      // keeps the edge-to-edge behavior (margin = 0).
+      let margin = 0;
+      if (get().editMode === "snap") {
+        const container = findContainer(r, parent.id, canvasSize);
+        const rows = container
+          ? containerRows(r, container, canvasSize).filter((row) => !row.ids.includes(id))
+          : [];
+        margin = inferSideMargin(rows, {
+          left: parentAbs.x,
+          right: parentAbs.x + parentAbs.w,
+        });
+      }
+      // Offset from the start edge for an edge alignment: a `margin` inset at the
+      // start, the symmetric inset at the end, dead-center for center. Clamped so
+      // a near-full element can't be pushed out of the parent.
+      const edgeRel = (free: number) =>
+        mode === "start" ? Math.min(margin, Math.max(0, free))
+        : mode === "end" ? Math.max(0, free - margin)
+        : free / 2;
+
       if (mode === "stretch") {
         if (axis === "h") {
           newAnchorMin.x = 0;
           newAnchorMax.x = 1;
-          newRect.x = parentAbs.x;
-          newRect.w = parentAbs.w;
+          newRect.x = parentAbs.x + margin;
+          newRect.w = Math.max(1, parentAbs.w - 2 * margin);
+        } else if (snapMode && snapFill) {
+          // Snap: fill the ROW band height, not the whole canvas. Keep current
+          // anchors + x/width; only grow vertically to the band. The reflow that
+          // follows re-centers row members, but this one is now the tallest, so
+          // it stays pinned to the band top and its height sticks.
+          newRect.y = snapFill.band.y;
+          newRect.h = snapFill.band.h;
         } else {
           newAnchorMin.y = 0;
           newAnchorMax.y = 1;
-          newRect.y = parentAbs.y;
-          newRect.h = parentAbs.h;
+          newRect.y = parentAbs.y + margin;
+          newRect.h = Math.max(1, parentAbs.h - 2 * margin);
         }
       } else if (axis === "h") {
         const free = parentAbs.w - slotAbs.w;
-        const rel = mode === "start" ? 0 : mode === "end" ? free : free / 2;
         // Collapse horizontal anchors to a single point at the alignment side
         // so the element stays pinned even if the canvas resizes.
         const a = mode === "start" ? 0 : mode === "end" ? 1 : 0.5;
         newAnchorMin.x = a;
         newAnchorMax.x = a;
-        newRect.x = parentAbs.x + rel;
+        newRect.x = parentAbs.x + edgeRel(free);
       } else {
         const free = parentAbs.h - slotAbs.h;
-        const rel = mode === "start" ? 0 : mode === "end" ? free : free / 2;
         // axis "v": "start" = Top, "end" = Bottom in CSS terms.
         // Resonite is Y-up: anchor.y=1 is top edge, 0 is bottom edge.
         const a = mode === "start" ? 1 : mode === "end" ? 0 : 0.5;
         newAnchorMin.y = a;
         newAnchorMax.y = a;
-        newRect.y = parentAbs.y + rel;
+        newRect.y = parentAbs.y + edgeRel(free);
       }
 
       const { offsetMin, offsetMax } = rectToOffsets(
@@ -903,7 +1392,20 @@ export const useStore = create<State & Actions>((set, get) => {
       next = updateComponentProp(next, id, "RectTransform", "anchorMax", newAnchorMax);
       next = updateComponentProp(next, id, "RectTransform", "offsetMin", offsetMin);
       next = updateComponentProp(next, id, "RectTransform", "offsetMax", offsetMax);
-      commit(next);
+      // Snap mode: re-pack after a horizontal align so sibling rows, grabbers and
+      // any freed dead space stay consistent. Reflow keeps an in-bounds element's
+      // exact x (Case 1 in layoutRowMembers), so the new alignment sticks while
+      // the column re-stacks. Root uses the pure reflow folded into the commit; a
+      // nested container reflows live after the commit (mirrors the add/resize
+      // flow). Free mode is absolute — commit as-is, no reflow needed.
+      if (snapMode && parent.id === r.id) {
+        commit(snapReflowRoot(next));
+      } else if (snapMode) {
+        commit(next);
+        get().reflowContainerNow(parent.id);
+      } else {
+        commit(next);
+      }
     },
 
     rename: (id, name) => commit(renameSlot(get().root, id, name)),
@@ -973,9 +1475,16 @@ export const useStore = create<State & Actions>((set, get) => {
             if (snapMode) next = snapReflowRoot(next);
           } else {
             next = addChildSlot(r, parentId, widget);
+            // Drop it at the bottom of an absolute container (tab page / popup)
+            // full-width, so the reflow below stacks it cleanly with the siblings
+            // instead of leaving the centered builder default floating mid-page.
+            if (snapMode) next = placeChildAtAbsoluteContainerBottom(next, parentId, widget.id);
           }
           commit(next);
           set({ selectedSlotId: widget.id });
+          // Adding into a nested container (tab page / scroll area): stack the new
+          // element in its flow and grow a Tabs container to fit (folded in).
+          if (snapMode && !parentIsRoot) get().reflowContainerNow(parentId);
           return;
         }
       }
@@ -1021,9 +1530,12 @@ export const useStore = create<State & Actions>((set, get) => {
       } else {
         next = addChildSlot(r, parentId, child);
         next = addComponent(next, child.id, ct);
+        if (snapMode) next = placeChildAtAbsoluteContainerBottom(next, parentId, child.id);
       }
       commit(next);
       set({ selectedSlotId: child.id });
+      // Stack into the nested container's flow + grow a Tabs container to fit.
+      if (snapMode && !parentIsRoot) get().reflowContainerNow(parentId);
     },
 
     detachComponent: (slotId, type) => commit(removeComponent(get().root, slotId, type)),
@@ -1183,14 +1695,191 @@ export const useStore = create<State & Actions>((set, get) => {
       commit(applyButtonPreset(get().root, slotId, preset)),
 
     setProp: (slotId, type, key, value) =>
-      commit(updateComponentProp(get().root, slotId, type, key, value)),
+      commitField(
+        updateComponentProp(get().root, slotId, type, key, value),
+        `${slotId}:${type}:${key}`,
+      ),
 
     setProps: (slotId, type, entries) => {
       let r = get().root;
       for (const [key, value] of entries) {
         r = updateComponentProp(r, slotId, type, key, value);
       }
-      commit(r);
+      commitField(r, `${slotId}:${type}:${entries.map((e) => e[0]).join(",")}`);
+    },
+
+    setContentPadding: (padding) => {
+      const root = get().root;
+      const canvas = root.components.find((c) => c.type === "Canvas");
+      const cur =
+        ((canvas?.props as { contentPadding?: number } | undefined)?.contentPadding) ??
+        DEFAULT_CONTENT_PADDING;
+      const np = Math.max(0, Math.round(padding));
+      const delta = np - cur;
+      // Always record the new value on the Canvas component.
+      let next = updateComponentProp(root, root.id, "Canvas", "contentPadding", np);
+      // Re-inset top-level BODY content by the delta. Skipped: structural chrome
+      // (backdrop layers stretch with the canvas), the floating popup card, and
+      // full-bleed bars (header/footer spanning edge-to-edge, |offset.x| ≈ 0) —
+      // those keep their edges. Shifting omin.x/omax.x by ±delta preserves each
+      // element's relative inset, so designed alignments (e.g. the checklist's
+      // two lists) stay locked together at any padding value.
+      if (delta !== 0) {
+        for (const child of root.children) {
+          if (isStructuralSlot(child)) continue;
+          if (isPopupContentSlot(child)) continue;
+          const rt = getRectTransform(child);
+          if (Math.abs(rt.offsetMin.x) <= 1 && Math.abs(rt.offsetMax.x) <= 1) continue;
+          next = updateComponentProp(next, child.id, "RectTransform", "offsetMin", {
+            ...rt.offsetMin,
+            x: rt.offsetMin.x + delta,
+          });
+          next = updateComponentProp(next, child.id, "RectTransform", "offsetMax", {
+            ...rt.offsetMax,
+            x: rt.offsetMax.x - delta,
+          });
+        }
+      }
+      commitField(next, `${root.id}:Canvas:contentPadding`);
+    },
+
+    setActiveTab: (hostId, index) => commit(applyActiveTab(get().root, hostId, index)),
+    selectTab: (hostId, index) => {
+      // Switching which tab is shown is a real doc change (activeTab is also the
+      // exported initial tab), but BROWSING tabs shouldn't push one undo step per
+      // click. Coalesce: the first switch in a run snapshots history; consecutive
+      // switches replace the root in place. Any genuine edit (commit/dragCommit)
+      // clears _lastTabSwitchHost, so the next switch starts a fresh undo step.
+      const s = get();
+      const next = applyActiveTab(s.root, hostId, index);
+      if (next === s.root) {
+        set({ selectedSlotId: hostId });
+        return;
+      }
+      // Coalesce only consecutive switches on the SAME host — switching a tab on
+      // a different Tabs group is its own undo step.
+      const coalesce = s._lastTabSwitchHost === hostId;
+      set({
+        root: next,
+        selectedSlotId: hostId,
+        dirty: true,
+        future: [],
+        history: coalesce
+          ? s.history
+          : [...s.history, { root: s.root, theme: s.theme }].slice(-HISTORY_LIMIT),
+        _lastTabSwitchHost: hostId,
+        _lastEditKey: null,
+      });
+    },
+    setTabLabel: (hostId, index, text) =>
+      commit(setTabLabelTree(get().root, hostId, index, text)),
+    addTab: (hostId) => {
+      const { root } = addTabTree(get().root, hostId);
+      commit(root);
+      set({ selectedSlotId: hostId });
+    },
+    removeTab: (hostId, index) => {
+      const { root } = removeTabTree(get().root, hostId, index);
+      commit(root);
+      set({ selectedSlotId: hostId });
+    },
+    moveTab: (hostId, index, dir) => {
+      commit(moveTabTree(get().root, hostId, index, dir));
+      set({ selectedSlotId: hostId });
+    },
+    setTabsPosition: (hostId, position) => {
+      commit(setTabsPositionTree(get().root, hostId, position));
+      set({ selectedSlotId: hostId });
+    },
+
+    setRadioOptions: (groupSlotId, labels, labelPosition, orientation, initialIndex) => {
+      const r0 = get().root;
+      const group = findSlot(r0, groupSlotId);
+      const rg = group?.components.find((c) => c.type === "RadioGroup");
+      if (!group || !rg) return;
+      const cleaned = labels.map((l) => l ?? "");
+      if (cleaned.length === 0) cleaned.push("Option 1");
+      const groupId = (rg.props as { groupId?: string }).groupId ?? "group1";
+      const idx = Math.min(Math.max(0, initialIndex), cleaned.length - 1);
+      const { radials, rowHeight } = buildRadials(cleaned, labelPosition, orientation, groupId, idx);
+
+      // Replace the option-bearing children (old "Radials" wrapper or loose option
+      // slots) with the freshly-built cluster; keep the caption + 📚 Value (any
+      // child whose subtree carries no Radio marker), preserving their order and
+      // dropping the cluster in where the options used to be.
+      const hasRadio = (n: Slot): boolean =>
+        n.components.some((c) => c.type === "Radio") || n.children.some(hasRadio);
+      const isOptionChild = (ch: Slot) => ch.name === "Radials" || hasRadio(ch);
+      const kept = group.children.filter((ch) => !isOptionChild(ch));
+      const firstRemoved = group.children.findIndex(isOptionChild);
+      const insertAt =
+        firstRemoved < 0
+          ? kept.length
+          : group.children.slice(0, firstRemoved).filter((ch) => !isOptionChild(ch)).length;
+      const newChildren = [...kept.slice(0, insertAt), radials, ...kept.slice(insertAt)];
+
+      let next = setSlotChildren(r0, groupSlotId, newChildren);
+      next = updateComponentProp(next, groupSlotId, "RadioGroup", "options", cleaned.join("\n"));
+      next = updateComponentProp(next, groupSlotId, "RadioGroup", "labelPosition", labelPosition);
+      next = updateComponentProp(next, groupSlotId, "RadioGroup", "orientation", orientation);
+      next = updateComponentProp(next, groupSlotId, "RadioGroup", "initialIndex", idx);
+
+      // Grow/shrink the group row to fit the cluster height (keep its top edge),
+      // then reflow so snap siblings shift for the new height.
+      const canvasSize = canvasSizeOf(next);
+      const groupRect = computeAbsoluteRect(next, groupSlotId, canvasSize);
+      const parent = findParent(next, groupSlotId);
+      const target = findSlot(next, groupSlotId);
+      if (groupRect && target) {
+        const parentRect =
+          (parent ? computeAbsoluteRect(next, parent.id, canvasSize) : null) ??
+          { x: 0, y: 0, w: canvasSize.w, h: canvasSize.h };
+        const rt = getRectTransform(target);
+        const { offsetMin, offsetMax } = rectToOffsets(
+          { x: groupRect.x, y: groupRect.y, w: groupRect.w, h: rowHeight },
+          parentRect,
+          rt.anchorMin,
+          rt.anchorMax,
+        );
+        next = updateComponentProp(next, groupSlotId, "RectTransform", "offsetMin", offsetMin);
+        next = updateComponentProp(next, groupSlotId, "RectTransform", "offsetMax", offsetMax);
+      }
+
+      const snapMode = get().editMode === "snap";
+      const parentIsRoot = !parent || parent.id === next.id;
+      if (snapMode && parentIsRoot) {
+        commit(snapReflowRoot(next));
+      } else {
+        commit(next);
+        if (snapMode && parent) get().reflowContainerNow(parent.id);
+      }
+      set({ selectedSlotId: groupSlotId });
+    },
+    setTabsAppearance: (hostId, key, value) => {
+      // Geometry props re-lay the bar + pages (setTabsPosition reads tabBarSize /
+      // tabSpacing from the props); color props re-tint the surfaces. Either way
+      // the preview updates live and matches what the exporter emits.
+      const SIZE_KEYS = new Set(["tabBarSize", "tabSpacing"]);
+      const COLOR_KEYS = new Set([
+        "activeColor", "inactiveColor", "pageColor", "frameColor", "labelColor",
+      ]);
+      let next = updateComponentProp(get().root, hostId, "Tabs", key, value);
+      const host = findSlot(next, hostId);
+      if (host && isTabsHost(host)) {
+        if (SIZE_KEYS.has(key)) next = setTabsPositionTree(next, hostId, tabsPositionOf(host));
+        else if (COLOR_KEYS.has(key)) next = retintTabs(next, hostId);
+      }
+      // pagePadding is the page content inset: re-flow the active page so the new
+      // padding visibly re-lays its content (snap mode; the reflow reads
+      // pagePadding for the bounds inset). Folded into THIS tree so it lands in
+      // one commit / one undo step (free mode places content absolutely, so the
+      // padding just applies to future adds).
+      if (key === "pagePadding" && get().editMode === "snap" && host) {
+        const pageId = activeTabPageId(host);
+        if (pageId) next = reflowContainerTree(next, pageId);
+      }
+      commit(next);
+      set({ selectedSlotId: hostId });
     },
 
     dragStart: () => {
@@ -1210,14 +1899,199 @@ export const useStore = create<State & Actions>((set, get) => {
       set(patch);
     },
 
+    setLayoutSize: (slotId, w, h) => {
+      const r = get().root;
+      const slot = findSlot(r, slotId);
+      if (!slot || !slot.components.some((c) => c.type === "LayoutElement")) return;
+      let next = updateComponentProp(r, slotId, "LayoutElement", "preferredWidth", Math.max(8, Math.round(w)));
+      next = updateComponentProp(next, slotId, "LayoutElement", "preferredHeight", Math.max(8, Math.round(h)));
+      const patch: Partial<State> = { root: next };
+      if (get().editMode === "free") patch.freeEditsDirty = true;
+      set(patch);
+    },
+
+    refitContainerComposites: (containerId) => {
+      const r = get().root;
+      const canvasSize = canvasSizeOf(r);
+      // Locate the actual container (the "Scroll Area" row wraps a "Scroll
+      // Viewport" that carries the ScrollArea component).
+      const locate = (s: Slot): Slot | null => {
+        if (getLayoutKind(s) !== null || s.components.some((c) => c.type === "Tabs")) return s;
+        for (const ch of s.children) {
+          const f = locate(ch);
+          if (f) return f;
+        }
+        return null;
+      };
+      const start = findSlot(r, containerId);
+      const container = start ? locate(start) : null;
+      if (!container) return;
+      // The rows whose composites should refit: a Tabs active page's children, or
+      // a scroll/layout container's direct children.
+      let rows: Slot[];
+      if (container.components.some((c) => c.type === "Tabs")) {
+        // Refit composites on EVERY tab page (they share the same rect), not just
+        // the active one — otherwise the other tabs stay clipped.
+        const pages = container.children.filter((c) => c.components.some((k) => k.type === "TabPage"));
+        rows = pages.flatMap((p) => p.children);
+      } else {
+        rows = container.children;
+      }
+      let next = r;
+      for (const row of rows) {
+        const fit = compositeRefitInfo(row);
+        if (!fit) continue;
+        const rowW = computeAbsoluteRect(next, row.id, canvasSize)?.w ?? 0;
+        if (rowW <= 0) continue;
+        const cmin = Math.min(fit.controlMin, fit.controlNatural);
+        const controlW = Math.max(cmin, Math.min(fit.controlNatural, rowW - fit.labelW - SNAP_GAP));
+        const control = findSlot(next, fit.controlId);
+        if (control) {
+          const crt = getRectTransform(control);
+          next = updateComponentProp(next, fit.controlId, "RectTransform", "offsetMin", { x: -controlW, y: crt.offsetMin.y });
+          next = updateComponentProp(next, fit.controlId, "RectTransform", "offsetMax", { x: 0, y: crt.offsetMax.y });
+        }
+        const labelSlot = findSlot(next, fit.labelId);
+        if (labelSlot) {
+          const lrt = getRectTransform(labelSlot);
+          next = updateComponentProp(next, fit.labelId, "RectTransform", "offsetMin", { x: 0, y: lrt.offsetMin.y });
+          next = updateComponentProp(next, fit.labelId, "RectTransform", "offsetMax", { x: -(controlW + SNAP_GAP), y: lrt.offsetMax.y });
+        }
+      }
+      // Resizing/moving inside a tab can change its content height — grow the
+      // Tabs to fit (and re-stack the canvas).
+      next = fitTabsToContent(next);
+      if (next !== r) set({ root: next });
+    },
+
+    refitComposite: (slotId, controlWidth) => {
+      const r = get().root;
+      const wrapper = findSlot(r, slotId);
+      if (!wrapper) return;
+      const labelSlot = wrapper.children.find((c) => c.name === "Label");
+      const control = wrapper.children.find(
+        (c) => c !== labelSlot && c.components.some((k) => k.type === "RectTransform"),
+      );
+      if (!control) return;
+      // Top-labelled: the control is stacked under the label (stretchy ones track
+      // the wrapper width via their anchors), so a width resize needs no per-control
+      // offset change — just re-apply the deterministic stacked layout.
+      if (labelPositionOf(wrapper) === "top") {
+        const crt0 = getRectTransform(control);
+        const controlH = Math.abs((crt0.offsetMax?.y ?? 0) - (crt0.offsetMin?.y ?? 0));
+        const stretchy = STRETCHY_CONTROL_TYPES.has(wrapper.name);
+        const natW = Math.abs((crt0.offsetMax?.x ?? 0) - (crt0.offsetMin?.x ?? 0)) || DEFAULT_CONTROL_WIDTH[wrapper.name] || 80;
+        const fontPx = (labelSlot?.components.find((k) => k.type === "Text")?.props as { size?: number } | undefined)?.size ?? 14;
+        const labelW = measureLabelWidth(controlLabelText(wrapper), fontPx);
+        const layout = computeCompositeLayout("top", { stretchy, controlW: natW, controlH, labelW });
+        let topNext = applyRT(r, control.id, layout.control);
+        if (labelSlot) topNext = applyRT(topNext, labelSlot.id, layout.label);
+        const topPatch: Partial<State> = { root: topNext };
+        if (get().editMode === "free") topPatch.freeEditsDirty = true;
+        set(topPatch);
+        return;
+      }
+      const cw = Math.max(1, controlWidth);
+      // Control: keep its right anchor + vertical offsets; set its width.
+      const crt = getRectTransform(control);
+      let next = updateComponentProp(r, control.id, "RectTransform", "offsetMin", { x: -cw, y: crt.offsetMin.y });
+      next = updateComponentProp(next, control.id, "RectTransform", "offsetMax", { x: 0, y: crt.offsetMax.y });
+      // Label: left-anchored, reserving exactly (control + gap) on the right so it
+      // fills the rest and never clips.
+      if (labelSlot) {
+        const lrt = getRectTransform(labelSlot);
+        next = updateComponentProp(next, labelSlot.id, "RectTransform", "offsetMin", { x: 0, y: lrt.offsetMin.y });
+        next = updateComponentProp(next, labelSlot.id, "RectTransform", "offsetMax", { x: -(cw + SNAP_GAP), y: lrt.offsetMax.y });
+      }
+      const patch: Partial<State> = { root: next };
+      if (get().editMode === "free") patch.freeEditsDirty = true;
+      set(patch);
+    },
+
+    setLabelPosition: (slotId, pos) => {
+      const base = get().root;
+      const wrapper = findSlot(base, slotId);
+      if (!wrapper || !LABELLED_CONTROL_TYPES.has(wrapper.name)) return;
+      // Multi-part composites (Radio Group) keep their authored left layout.
+      if (wrapper.components.some((c) => c.type === "RadioGroup")) return;
+      if (labelPositionOf(wrapper) === pos) return;
+      const label = wrapper.children.find((c) => c.name === "Label");
+      const controls = wrapper.children.filter(
+        (c) => c !== label && c.components.some((k) => k.type === "RectTransform"),
+      );
+      if (!label || controls.length !== 1) return;
+      const control = controls[0];
+
+      const crt = getRectTransform(control);
+      const controlH = Math.abs((crt.offsetMax?.y ?? 0) - (crt.offsetMin?.y ?? 0)) || 28;
+      const controlW =
+        Math.abs((crt.offsetMax?.x ?? 0) - (crt.offsetMin?.x ?? 0)) ||
+        DEFAULT_CONTROL_WIDTH[wrapper.name] || 80;
+      const fontPx = (label.components.find((k) => k.type === "Text")?.props as { size?: number } | undefined)?.size ?? 14;
+      const labelW = measureLabelWidth(controlLabelText(wrapper), fontPx);
+      const stretchy = STRETCHY_CONTROL_TYPES.has(wrapper.name);
+      const layout = computeCompositeLayout(pos, { stretchy, controlW, controlH, labelW });
+
+      // Record the position, then re-lay the internals (label + control).
+      let next = setLabelPositionField(base, slotId, pos);
+      next = applyRT(next, label.id, layout.label);
+      next = applyRT(next, control.id, layout.control);
+
+      const parent = findParent(base, slotId);
+      const layoutManaged = isLayoutManaged(base, slotId);
+      if (layoutManaged) {
+        // Inside a ScrollArea / layout, the wrapper's HEIGHT is owned by its
+        // LayoutElement (the RT is ignored), so the band only makes room for
+        // itself if we grow the LayoutElement — then the layout shifts the rows
+        // below it down. Add one if missing (carrying its order index).
+        const live = findSlot(next, slotId);
+        if (live && !live.components.some((c) => c.type === "LayoutElement")) {
+          next = addComponent(next, slotId, "LayoutElement");
+          const idx = parent ? parent.children.filter((c) => !isStructuralSlot(c)).findIndex((c) => c.id === slotId) : 0;
+          next = updateComponentProp(next, slotId, "LayoutElement", "orderOffset", Math.max(0, idx));
+        }
+        next = updateComponentProp(next, slotId, "LayoutElement", "preferredHeight", layout.wrapperH);
+        next = updateComponentProp(next, slotId, "LayoutElement", "minHeight", layout.wrapperH);
+      } else {
+        // Absolute placement: resize the wrapper RT, keeping its TOP edge pinned
+        // so it grows/shrinks downward (predictable stacking).
+        const canvasSize = canvasSizeOf(base);
+        const wrapRect = computeAbsoluteRect(base, slotId, canvasSize);
+        const parentRect =
+          (parent ? computeAbsoluteRect(base, parent.id, canvasSize) : null) ??
+          { x: 0, y: 0, w: canvasSize.w, h: canvasSize.h };
+        if (wrapRect) {
+          const wrt = getRectTransform(wrapper);
+          const newRect = { x: wrapRect.x, y: wrapRect.y, w: wrapRect.w, h: layout.wrapperH };
+          const { offsetMin, offsetMax } = rectToOffsets(newRect, parentRect, wrt.anchorMin, wrt.anchorMax);
+          next = updateComponentProp(next, slotId, "RectTransform", "offsetMin", offsetMin);
+          next = updateComponentProp(next, slotId, "RectTransform", "offsetMax", offsetMax);
+        }
+      }
+
+      // Snap mode: reflow so siblings shift for the new height. Root-level uses
+      // the pure snapReflowRoot (folded into the same commit); a nested container
+      // reflows live after the commit (mirrors the add flow).
+      const snapMode = get().editMode === "snap";
+      const parentIsRoot = !parent || parent.id === base.id;
+      if (snapMode && parentIsRoot) {
+        commit(snapReflowRoot(next));
+      } else {
+        commit(next);
+        if (snapMode && parent) get().reflowContainerNow(parent.id);
+      }
+    },
+
     dragCommit: () => {
-      const { _preDragRoot, root, history } = get();
+      const { _preDragRoot, root, history, theme } = get();
       if (!_preDragRoot) return;
       set({
-        history: [...history, _preDragRoot].slice(-HISTORY_LIMIT),
+        history: [...history, { root: _preDragRoot, theme }].slice(-HISTORY_LIMIT),
         future: [],
         _preDragRoot: null,
         root,
+        _lastTabSwitchHost: null,
+        _lastEditKey: null,
       });
     },
 
@@ -1247,32 +2121,47 @@ export const useStore = create<State & Actions>((set, get) => {
       next = updateComponentProp(next, slotId, "RectTransform", "offsetMin", offsetMin);
       next = updateComponentProp(next, slotId, "RectTransform", "offsetMax", offsetMax);
       set({
-        history: [...get().history, base].slice(-HISTORY_LIMIT),
+        history: [...get().history, { root: base, theme: get().theme }].slice(-HISTORY_LIMIT),
         future: [],
         _preDragRoot: null,
         root: next,
+        _lastTabSwitchHost: null,
+        _lastEditKey: null,
       });
     },
 
     undo: () => {
-      const { history, root, future } = get();
+      const { history, root, theme, future, selectedSlotId, editingPopupId } = get();
       if (history.length === 0) return;
       const prev = history[history.length - 1];
       set({
-        root: prev,
+        root: prev.root,
+        theme: prev.theme,
         history: history.slice(0, -1),
-        future: [root, ...future].slice(0, HISTORY_LIMIT),
+        future: [{ root, theme }, ...future].slice(0, HISTORY_LIMIT),
+        _lastTabSwitchHost: null,
+        _lastEditKey: null,
+        // The restored tree may not contain the previously-selected slot (e.g.
+        // undoing an add) — drop a dangling selection / popup-edit binding so the
+        // Inspector and the floating popup surface never point at a ghost slot.
+        selectedSlotId: validSelection(prev.root, selectedSlotId),
+        editingPopupId: validSelection(prev.root, editingPopupId),
       });
     },
 
     redo: () => {
-      const { future, root, history } = get();
+      const { future, root, theme, history, selectedSlotId, editingPopupId } = get();
       if (future.length === 0) return;
       const [next, ...rest] = future;
       set({
-        root: next,
+        root: next.root,
+        theme: next.theme,
         future: rest,
-        history: [...history, root].slice(-HISTORY_LIMIT),
+        history: [...history, { root, theme }].slice(-HISTORY_LIMIT),
+        _lastTabSwitchHost: null,
+        _lastEditKey: null,
+        selectedSlotId: validSelection(next.root, selectedSlotId),
+        editingPopupId: validSelection(next.root, editingPopupId),
       });
     },
 
@@ -1292,7 +2181,12 @@ export const useStore = create<State & Actions>((set, get) => {
     loadPreset: (presetId) => {
       const p = findPreset(presetId);
       if (!p) return;
-      let r = lockRoot(p.build());
+      // Build in the current language: the starter template localizes via
+      // getDict().content; every other preset builds English then has its
+      // designed text translated by localizePanelText (unknown strings stay
+      // English). Slot names + non-text props are untouched.
+      const lang = get().language;
+      let r = lockRoot(localizePanelText(p.build(lang), lang));
       // Match the editor + export layout mode to the preset's shape. Free-form
       // presets (cards, dialogs, split layouts, the keypad grid) open in Free
       // mode with stackLayout off so their absolute 2D design is preserved;
@@ -1300,6 +2194,10 @@ export const useStore = create<State & Actions>((set, get) => {
       // reorderable in-game. (See PresetDescriptor.freeform.)
       const stack = !p.freeform;
       r = updateComponentProp(r, r.id, "Canvas", "stackLayout", stack);
+      // Snap templates must respect the canvas content margin. (Free-form presets
+      // keep their hand-placed absolute layout — skipped.) No-op for presets
+      // already authored at/inside the margin; fixes any that sit too close.
+      if (stack) r = enforceCanvasMargins(r);
       set({
         root: r,
         selectedSlotId: null,
@@ -1327,7 +2225,10 @@ export const useStore = create<State & Actions>((set, get) => {
       // Background chrome trio), not the flagship demo. Fall back to the
       // flagship if the blank preset ever goes missing.
       const blank = findPreset("blank");
-      const r = lockRoot(blank ? blank.build() : createStarterTemplate());
+      const lang = get().language;
+      const r = lockRoot(
+        localizePanelText(blank ? blank.build(lang) : createStarterTemplate(lang), lang),
+      );
       set({
         root: r,
         selectedSlotId: null,
@@ -1422,6 +2323,13 @@ export const useStore = create<State & Actions>((set, get) => {
       set({ root: applyResultToContainer(base, container, result, canvasSize) });
     },
 
+    reflowContainerNow: (containerId) => {
+      // Live re-stack (its own non-history set — callers bracket with
+      // dragStart/dragCommit or fold it into their own commit). The actual work
+      // lives in reflowContainerTree so folded-edit paths can reuse it.
+      set({ root: reflowContainerTree(get().root, containerId) });
+    },
+
     flowReparent: (draggedIds, targetContainerId, drop) => {
       const base = get()._preDragRoot ?? get().root;
       const canvasSize = canvasSizeOf(base);
@@ -1503,6 +2411,8 @@ export const useStore = create<State & Actions>((set, get) => {
           }
         }
       }
+      // If the drop landed inside a tab page, grow its Tabs container to fit.
+      next = fitTabsToContent(next);
       set({ root: next });
     },
 
@@ -1683,16 +2593,29 @@ export const useStore = create<State & Actions>((set, get) => {
         anchorY: rows[0].top,
         bottomMargin: APPEND_MARGIN,
         bounds: { left: rootC.absRect.x, right: rootC.absRect.x + rootC.absRect.w },
+        // Use the canvas content margin as the edge gutter (instead of inferring
+        // it from the current positions) so arranging snaps content to the margin.
+        sideMargin: canvasContentPad(r0),
         minWidths: minWidthsFor(r0, rootC, canvasSize),
       });
 
-      commit(applyResultToContainer(r0, rootC, result, canvasSize, true /* fit canvas */));
+      // Re-inset any wide full-stretch element that still sits closer than the
+      // margin (the reflow leaves full-width elements at their authored width).
+      const arranged = applyResultToContainer(r0, rootC, result, canvasSize, true /* fit canvas */);
+      commit(enforceCanvasMargins(arranged));
       set({ freeEditsDirty: false });
     },
 
     toggleOverlays: () => set((s) => ({ showOverlays: !s.showOverlays })),
     toggleLeftPanel: () => set((s) => ({ leftPanelHidden: !s.leftPanelHidden })),
     toggleRightPanel: () => set((s) => ({ rightPanelHidden: !s.rightPanelHidden })),
+    setWhatsNewOpen: (open) => set({ whatsNewOpen: open }),
+    // UI-only: plain set() (never commit/history) + persist. The open document
+    // is intentionally left untouched so switching language can't clobber edits.
+    setLanguage: (lang) => {
+      writeLanguage(lang);
+      set({ language: lang });
+    },
     openContextMenu: (x, y, slotId) => {
       // If the user right-clicks a slot, also select it so the Inspector
       // moves to that slot — matches the expectation that right-click on a
@@ -1706,36 +2629,59 @@ export const useStore = create<State & Actions>((set, get) => {
     closeContextMenu: () => set({ contextMenu: null }),
 
     setTheme: (partial) => {
-      // Any manual edit kicks the preset selector into "custom" so the user
-      // sees that they're no longer on a named preset.
-      set((s) => ({ theme: { ...s.theme, ...partial, preset: "custom" }, dirty: true }));
+      // Any manual edit kicks the preset selector into "custom" so the user sees
+      // they're no longer on a named preset. Routed through commitTheme so the
+      // staged value is part of the same coalesced undo step as the live re-tint
+      // that follows it (the Theme menu calls setTheme + apply* together).
+      const next = { ...get().theme, ...partial, preset: "custom" as const };
+      commitTheme(get().root, next);
     },
 
     selectThemePreset: (preset) => {
       const next = applyThemePresetValues(preset, get().theme);
-      set({ theme: next });
-      if (preset !== "custom") {
-        // Picking a named preset is a one-click "set + apply": the new theme
-        // values are pushed onto the tree immediately so the user sees the
-        // change without a second click.
-        commit(applyAllTheme(get().root, next));
-      }
+      const nextRoot = preset !== "custom" ? applyAllTheme(get().root, next) : get().root;
+      // Picking a named preset is a discrete one-click "set + apply" — its own
+      // undo step (not coalesced into a prior color tweak), restoring both the
+      // tree and the theme values on undo.
+      set((s) => ({
+        history: [...s.history, { root: s.root, theme: s.theme }].slice(-HISTORY_LIMIT),
+        future: [],
+        root: nextRoot,
+        theme: next,
+        dirty: true,
+        _lastTabSwitchHost: null,
+        _lastEditKey: null,
+      }));
     },
 
-    applyThemeAll: () => commit(applyAllTheme(get().root, get().theme)),
-    applyThemeBackground: () => commit(applyBackground(get().root, get().theme.background)),
+    applyThemeAll: () => commitTheme(applyAllTheme(get().root, get().theme), get().theme),
+    applyThemeBackground: () =>
+      commitTheme(applyBackground(get().root, get().theme.background), get().theme),
     applyThemeHeaderText: () =>
-      commit(applyHeaderText(get().root, get().theme.headerTextColor, get().theme.headerTextSize)),
+      commitTheme(
+        applyHeaderText(get().root, get().theme.headerTextColor, get().theme.headerTextSize),
+        get().theme,
+      ),
     applyThemeBodyText: () =>
-      commit(applyBodyText(get().root, get().theme.bodyTextColor, get().theme.bodyTextSize)),
-    applyThemeAccent: () => commit(applyAccent(get().root, get().theme.accent)),
-    applyThemeControlSurface: () => commit(applyControlSurface(get().root, get().theme.controlSurface)),
-    applyThemeButtonA: () => commit(applyButtonA(get().root, get().theme.buttonA)),
-    applyThemeButtonB: () => commit(applyButtonB(get().root, get().theme.buttonB)),
-    applyThemeCornerRadius: () => commit(applyCornerRadius(get().root, get().theme.cornerRadius)),
+      commitTheme(
+        applyBodyText(get().root, get().theme.bodyTextColor, get().theme.bodyTextSize),
+        get().theme,
+      ),
+    applyThemeAccent: () => commitTheme(applyAccent(get().root, get().theme.accent), get().theme),
+    applyThemeControlSurface: () =>
+      commitTheme(applyControlSurface(get().root, get().theme.controlSurface), get().theme),
+    applyThemeContainerSurface: () =>
+      commitTheme(applyContainerSurface(get().root, get().theme.containerSurface), get().theme),
+    applyThemeButtonA: () => commitTheme(applyButtonA(get().root, get().theme.buttonA), get().theme),
+    applyThemeButtonB: () => commitTheme(applyButtonB(get().root, get().theme.buttonB), get().theme),
+    applyThemeCornerRadius: () =>
+      commitTheme(applyCornerRadius(get().root, get().theme.cornerRadius), get().theme),
     applyBranding: () => {
       const t = get().theme;
-      commit(applyBranding(get().root, t.backLogoUrl, t.backLogoReason, t.backLogoImageHash));
+      commitTheme(
+        applyBranding(get().root, t.backLogoUrl, t.backLogoReason, t.backLogoImageHash),
+        t,
+      );
     },
   };
 });

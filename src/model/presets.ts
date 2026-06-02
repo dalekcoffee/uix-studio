@@ -2,13 +2,17 @@ import type { Slot, UixComponent } from "./types";
 import { createStarterTemplate } from "./template";
 import { isStructuralName } from "./structural";
 import { buildBackgroundTrio } from "./background";
+import type { Lang } from "../locale/types";
 import { v4 as uuid } from "uuid";
 
 export interface PresetDescriptor {
   id: string;
   name: string;
   description: string;
-  build: () => Slot;
+  // The starter-template preset reads `lang` (it localizes via getDict().content);
+  // the rest build in English and are localized at load time by localizePanelText.
+  // A plain `() => Slot` build still satisfies this — the arg is simply ignored.
+  build: (lang: Lang) => Slot;
   /**
    * Visual category used by the Preset menu to group entries.
    * "panel"   = full canvas / panel starting point
@@ -1869,7 +1873,11 @@ function buildChecklistForm(): Slot {
       }),
       c("Text", { content: label, size: 14, color: TEXT, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
     ]);
-    return slot(label, [rectRT(W, H, 16, top, W - 16, top + 36)], [box, lbl]);
+    // Inset to MATCH the scrollable list's content box so the two checklists
+    // line up exactly: left 24 = 16 panel margin + 8 scroll inner pad; right
+    // edge W-44 = panel margin 16 + inner pad 8 + scrollbar gutter 20 (the
+    // static list reserves the same empty scrollbar strip the scroll card has).
+    return slot(label, [rectRT(W, H, 24, top, W - 44, top + 36)], [box, lbl]);
   }
 
   function scrollCheckRow(label: string, initialState: boolean, orderIdx: number): Slot {
@@ -2422,68 +2430,149 @@ function buildShowcasePanel(): Slot {
     ], [lbl, control]);
   }
 
-  // ── Feature board scaffold ────────────────────────────────────────────────────
-  // A board is a rounded backdrop panel with a small uppercase kicker and three
-  // feature blocks (name + one-line blurb + a live example beneath).
-  interface Feature {
-    name: string;
-    blurb: string;
-    example: (colLeft: number, zoneTop: number) => Slot[];
+  // A clickable "Link" example (mirrors the centre linkBar): a brand pill carrying
+  // the hyperlink props + a child Label caption. The exporter wires a rect-routed
+  // UIX Button + Hyperlink (on-canvas clickables route via a Button, never a
+  // misaligned physics collider). Reuses the localized "check out the tool :3".
+  function exLink(rtc: UixComponent): Slot {
+    return slot("Link Button", [
+      rtc,
+      c("Image", {
+        tint: BRAND, preserveAspect: false, spriteUrl: "", cornerRadius: 100,
+        hyperlinkUrl: "https://uix.dalek.coffee/", hyperlinkReason: "check out the tool :3",
+      }),
+    ], [
+      slot("Label", [
+        fillRT(),
+        c("Text", { content: "check out the tool :3", size: 13, color: WHITE, horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false }),
+      ]),
+    ]);
   }
 
-  function board(name: string, kicker: string, colL: number, colR: number, features: Feature[]): Slot[] {
-    // Board panel = a normal editable/deletable Image that sits behind its
-    // content by array order (NOT structural — see the Accent Bar note). Its
-    // overlap with the content layered on top is exempt via the warnings'
-    // "earlier sibling fully contains later" rule, and it keeps its size on a
-    // canvas grow because it's no longer skipped by the resize.
-    const boardBg = slot(name, [
-      rt(colL - 24, 168, colR + 24, 740),
-      // placeholderRemoved: it's a deliberate solid panel, not a "drop image here"
-      // slot — without this the editor's empty-Image detector dresses it up as a
-      // hatched placeholder (it no longer reads as structural chrome).
-      c("Image", { tint: rgb(0.085, 0.092, 0.108), preserveAspect: false, spriteUrl: "", cornerRadius: 14, placeholderRemoved: true }),
-    ]);
+  // ── Left board → tabbed section (vertical tab strip on the LEFT) ──────────────
+  // The old static "INTERACT" board is now a real Tabs container occupying the
+  // same column. The tab strip runs down the left; each page is a mini feature
+  // board (element name + one-line blurb + a LIVE example), exactly like the old
+  // board's blocks. Tab 1 keeps the original Buttons / Sliders / Text Fields trio
+  // ("the items in the current container"); the other three group the rest of the
+  // control library by purpose — so the poster now shows off BOTH container styles
+  // (Tabs here, a ScrollArea on the right).
+  //
+  // Geometry + colors mirror the manual tabs in template.ts (and what
+  // setTabsPosition("left") produces). The exporter keys off the
+  // Tabs/TabButton/TabPage markers (layout-agnostic), so this freeform host still
+  // lowers into the shared ValueField<int> + per-page Active drivers correctly.
+  const TAB_BAR = 84;       // vertical strip width (fits horizontal labels)
+  const TAB_OVERLAP = 8;    // page tucks under the strip's inner edge (folder merge)
+  const TAB_EDGE = 6;       // page inset from the frame edges (frame = thin border)
+  const TAB_PAD = 12;       // page inner padding (used by the editor's reflow/add)
+  const V_TAB_H = 34;       // per-tab button height in the vertical strip
+  const tabFrame    = rgb(0.085, 0.092, 0.108); // frame card — matches the right board bg
+  const tabContent  = rgb(0.130, 0.145, 0.170); // page panel + active tab (shared → merge)
+  const tabInactive = rgb(0.100, 0.110, 0.130); // recessed inactive tabs
 
-    const kickerSlot = slot(`${name} Kicker`, [
-      rt(colL, 184, colR, 206),
-      c("Text", { content: kicker, size: 12, color: BRAND, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
-    ]);
+  // Host footprint = the same column the old left board used (x 40→376, y 168→740).
+  const tabHostL = 40;
+  const tabHostR = 376;
+  // Page content geometry (page-local px). PAGE_W = host width − strip − edges.
+  const PAGE_W = (tabHostR - TAB_EDGE) - (tabHostL + (TAB_BAR - TAB_OVERLAP)); // 254
+  const PAD = 14;                  // page content side padding
+  const CW = PAGE_W - 2 * PAD;     // content width (~226) — every example fits inside
 
-    const blocks: Slot[] = [];
-    features.forEach((f, i) => {
-      const blockTop = 222 + i * 168;
-      blocks.push(slot(`${f.name} Name`, [
-        rt(colL, blockTop, colR, blockTop + 28),
-        c("Text", { content: f.name, size: 19, color: WHITE, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
-      ]));
-      blocks.push(slot(`${f.name} Blurb`, [
-        rt(colL, blockTop + 30, colR, blockTop + 52),
-        c("Text", { content: f.blurb, size: 12, color: MUTED, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
-      ]));
-      blocks.push(...f.example(colL, blockTop + 60));
+  // A box measured in px from the page's TOP-LEFT corner (Y downward).
+  const pl = (left: number, top: number, w: number, h: number): UixComponent =>
+    c("RectTransform", {
+      anchorMin: { x: 0, y: 1 }, anchorMax: { x: 0, y: 1 },
+      offsetMin: { x: left, y: -(top + h) }, offsetMax: { x: left + w, y: -top },
+      pivot: { x: 0.5, y: 0.5 },
     });
 
-    return [boardBg, kickerSlot, ...blocks];
+  // One vertical tab button: fill-rect Image + Button + TabButton marker + a
+  // LayoutElement giving it a fixed height (VerticalLayout stacks them from the
+  // top, no force-expand). The Label child is inset off the inner (page-facing)
+  // edge by TAB_OVERLAP so it stays centred in the VISIBLE tab area once the page
+  // tucks over that edge (matches applyTabLabelInset in tabs.ts).
+  function tabButton(idx: number, label: string): Slot {
+    const tint = idx === 0 ? tabContent : tabInactive;
+    return slot(`Tab ${idx + 1}`, [
+      fillRT(),
+      c("Image", { tint, preserveAspect: false, spriteUrl: "", cornerRadius: 8 }),
+      c("Button", { normalColor: tint, highlightColor: rgb(0.20, 0.23, 0.29), pressColor: rgb(0.09, 0.10, 0.13), disabledColor: rgb(0.3, 0.3, 0.3), hoverVibrate: false }),
+      c("TabButton", {}),
+      c("LayoutElement", { minWidth: -1, minHeight: -1, preferredWidth: -1, preferredHeight: V_TAB_H, flexibleWidth: 1, flexibleHeight: -1, orderOffset: idx }),
+    ], [
+      slot("Label", [
+        c("RectTransform", { anchorMin: { x: 0, y: 0 }, anchorMax: { x: 1, y: 1 }, offsetMin: { x: 0, y: 0 }, offsetMax: { x: -TAB_OVERLAP, y: 0 }, pivot: { x: 0.5, y: 0.5 } }),
+        c("Text", { content: label, size: 14, color: WHITE, horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false }),
+      ]),
+    ]);
   }
 
-  // Left board "INTERACT": Buttons, Sliders, Text Fields.
-  const leftL = 64;
-  const leftR = 336;
-  const leftBoard = board("Left Board", "INTERACT", leftL, leftR, [
-    {
-      name: "Buttons", blurb: "Trigger anything with a tap.",
-      example: (l, z) => [exButton(rt(l, z + 2, l + 150, z + 42))],
-    },
-    {
-      name: "Sliders", blurb: "Dial in a value smoothly.",
-      example: (l, z) => [exSlider(rt(l, z + 14, l + 200, z + 30))],
-    },
-    {
-      name: "Text Fields", blurb: "Let people type in-world.",
-      example: (l, z) => [exTextField(rt(l, z + 6, l + 210, z + 38))],
-    },
+  // Vertical tab strip down the left edge. forceExpandHeight:false + fixed button
+  // heights = a compact top-aligned stack. paddingRight 0 keeps the inner edge
+  // flush so each tab tucks under the page that overlaps it.
+  const tabBar = slot("Tab Bar", [
+    c("RectTransform", { anchorMin: { x: 0, y: 0 }, anchorMax: { x: 0, y: 1 }, offsetMin: { x: 0, y: 0 }, offsetMax: { x: TAB_BAR, y: 0 }, pivot: { x: 0.5, y: 0.5 } }),
+    c("VerticalLayout", { spacing: 3, paddingLeft: 4, paddingRight: 0, paddingTop: 6, paddingBottom: 6, horizontalAlign: "Center", verticalAlign: "Top", forceExpandWidth: true, forceExpandHeight: false }),
+  ], [tabButton(0, "Inputs"), tabButton(1, "Choices"), tabButton(2, "Display"), tabButton(3, "Dialogs")]);
+
+  // A page: left edge tucks over the strip by TAB_OVERLAP; other edges inset by
+  // TAB_EDGE. The shared content color makes the active tab merge into it.
+  function tabPage(idx: number, children: Slot[]): Slot {
+    return slot(`Page ${idx + 1}`, [
+      c("RectTransform", { anchorMin: { x: 0, y: 0 }, anchorMax: { x: 1, y: 1 }, offsetMin: { x: TAB_BAR - TAB_OVERLAP, y: TAB_EDGE }, offsetMax: { x: -TAB_EDGE, y: -TAB_EDGE }, pivot: { x: 0.5, y: 0.5 } }),
+      c("Image", { tint: tabContent, preserveAspect: false, spriteUrl: "", cornerRadius: 8 }),
+      c("TabPage", {}),
+    ], children);
+  }
+
+  // One feature block inside a page: Name + Blurb + a live example beneath. `ex`
+  // builds the example positioned at the given page-local Y. Blocks stack on a
+  // fixed pitch from the page top.
+  const BLOCK_TOPS = [16, 174, 332];
+  function blk(i: number, name: string, blurb: string, ex: (y: number) => Slot): Slot[] {
+    const top = BLOCK_TOPS[i];
+    return [
+      slot(`${name} Name`, [pl(PAD, top, CW, 26), c("Text", { content: name, size: 18, color: WHITE, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false })]),
+      slot(`${name} Blurb`, [pl(PAD, top + 30, CW, 20), c("Text", { content: blurb, size: 12, color: MUTED, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false })]),
+      ex(top + 56),
+    ];
+  }
+
+  // Tab 1 keeps the ORIGINAL left-board trio. Tabs 2-4 add more of the library.
+  const tabPage1 = tabPage(0, [
+    ...blk(0, "Buttons",     "Trigger anything with a tap.", (y) => exButton(pl(PAD, y, 150, 40))),
+    ...blk(1, "Sliders",     "Dial in a value smoothly.",    (y) => exSlider(pl(PAD, y + 10, 210, 16))),
+    ...blk(2, "Text Fields", "Let people type in-world.",    (y) => exTextField(pl(PAD, y + 4, 210, 32))),
   ]);
+  const tabPage2 = tabPage(1, [
+    ...blk(0, "Toggle",   "Flip a setting on or off.", (y) => exToggle(pl(PAD, y + 4, 60, 32))),
+    ...blk(1, "Checkbox", "Tick items off a list.",    (y) => exCheckbox(pl(PAD, y + 4, 30, 30))),
+    ...blk(2, "Dropdown", "Pick one from a menu.",     (y) => exDropdown(pl(PAD, y + 4, 200, 32))),
+  ]);
+  const tabPage3 = tabPage(2, [
+    ...blk(0, "Progress Bar", "Show how far along you are.",      (y) => exProgress(pl(PAD, y + 12, 210, 12))),
+    ...blk(1, "Spinner",      "Signal that something's loading.", (y) => exSpinner(pl(PAD, y, 34, 34))),
+    ...blk(2, "Color Picker", "Choose any color you like.",       (y) => exColor(pl(PAD, y + 6, 90, 28))),
+  ]);
+  const tabPage4 = tabPage(3, [
+    ...blk(0, "Popup Dialog", "Pop open a modal window.", (y) => exPopup(pl(PAD, y + 4, 120, 34))),
+    ...blk(1, "Link",         "Send people to any URL.",  (y) => exLink(pl(PAD, y + 4, 150, 34))),
+  ]);
+
+  const tabsHost = slot("Tabs", [
+    rt(tabHostL, 168, tabHostR, 740),
+    // Frame: the rounded card the whole group sits on (drawn behind bar + pages).
+    // placeholderRemoved keeps the editor's empty-Image detector off it (it backs
+    // content, like the right board bg).
+    c("Image", { tint: tabFrame, preserveAspect: false, spriteUrl: "", cornerRadius: 14, placeholderRemoved: true }),
+    c("Tabs", {
+      orientation: "Vertical", tabPosition: "left", activeTab: 0,
+      tabBarSize: TAB_BAR, tabSpacing: 3, pagePadding: TAB_PAD,
+      activeColor: tabContent, inactiveColor: tabInactive, pageColor: tabContent,
+      frameColor: tabFrame, labelColor: WHITE,
+    }),
+  ], [tabBar, tabPage1, tabPage2, tabPage3, tabPage4]);
 
   // Right board "MORE CONTROLS" — a real ScrollArea so the list itself shows off
   // scrolling. Holds more elements than fit (Toggle, Checkbox, Color Picker,
@@ -2550,7 +2639,7 @@ function buildShowcasePanel(): Slot {
     ],
     [
       background,
-      ...leftBoard,
+      tabsHost,
       rightBoardBg,
       rightKicker,
       scrollHint,
@@ -2691,7 +2780,7 @@ export const BUILTIN_PRESETS: readonly PresetDescriptor[] = [
     id: "showcase",
     name: "UIX Studio Showcase",
     description:
-      "A science-fair-poster advertisement for UIX Studio, built with the editor itself: a header banner + short description and the logo lockup dead-center. The left board lists input controls (Buttons, Sliders, Text Fields) with a live example of each; the right board is a real scrollable list of more controls (Toggle, Checkbox, Color Picker, Dropdown, Slider, Progress Bar, Text Field, Spinner, and a Popup-dialog button) so it shows off scrolling, the loading spinner, and pop-out dialogs too. A ready-to-show-off promo piece.",
+      "A science-fair-poster advertisement for UIX Studio, built with the editor itself: a header banner + short description and the logo lockup dead-center. The left section is a tabbed control gallery (tabs on the left) — Inputs (Buttons, Sliders, Text Fields), Choices (Toggle, Checkbox, Dropdown), Display (Progress Bar, Spinner, Color Picker), and Dialogs (Popup, Link) — each with a live example; the right board is a real scrollable list of more controls. So it shows off BOTH container styles (Tabs and a ScrollArea), plus scrolling, the loading spinner, and pop-out dialogs. A ready-to-show-off promo piece.",
     category: "marketing",
     freeform: true,
     build: buildShowcasePanel,

@@ -8,6 +8,7 @@ import brotliPromise from "brotli-wasm";
 const brotliReady = brotliPromise;
 import type { Slot, UixComponent, UixDocument } from "../model/types";
 import { isStructuralSlot } from "../model/structural";
+import { DEFAULT_CONTENT_PADDING, SCROLLBAR_GUTTER, resolvePad } from "../model/padding";
 import { findBackgroundSlots } from "../model/background";
 import { controlDisplayName } from "../model/controlName";
 import { emitScrollbar } from "./scrollbarEmitter";
@@ -157,11 +158,26 @@ const FULL_TYPE: Record<string, string> = {
 // using resdb:/// scheme tells Resonite to fetch from cloud if not locally cached.
 // (@packdb:/// only works for assets already in the user's local packdb cache.)
 // We ship a single bundled font (Noto Sans, hash 8c1dc004...) inside the .zip bundle.
-// @packdb:///<hash> URLs only resolve if the asset is in the bundle's assetManifest;
-// referencing unbundled hashes would leave fallback glyphs unresolved (still safe — just
-// missing CJK/emoji coverage). For now MainFont and all fallbacks share the one bundled font.
+// @packdb:///<hash> URLs only resolve if the asset is in the bundle's assetManifest.
+// This is the MainFont (Latin/Greek/Cyrillic, ~630KB — no CJK glyphs).
 const BUNDLED_FONT_URL =
   "@packdb:///8c1dc004996029f804283dd398ca2a05d4d33ebcba5c0d25ea13fd2026572279";
+
+// FallbackFonts for the FontChain — Resonite's OWN shipped CJK / symbol / emoji
+// fonts, captured from a live Resonite FontChain (see CLAUDE.md "Font assets").
+// Referenced from the user's local resdb cache rather than bundled, so JP/KR/CN
+// text renders without shipping multi-MB binaries in every export. The leading
+// "@" marks the Uri "preserve across import" — the same rule that keeps @packdb
+// bundles and @https hyperlinks from being null-coerced by Resonite's BSON-import
+// security pass; a bare resdb:/// here would be nulled and the glyphs would vanish.
+// Extensions (.ttf/.otf) are required for the fetch to resolve.
+const CJK_FALLBACK_FONT_URLS = [
+  "@resdb:///4cac521169034ddd416c6deffe2eb16234863761837df677a910697ec5babd25.ttf",
+  "@resdb:///b4a1dfdbfa13b4755e5eac20cb25c1d17ed5a745ceb89639595e8cf45a2b1e07.ttf",
+  "@resdb:///cd07743a4c93d8da929afdd28c1d368f11da478a1093146a13610081c2a58440.ttf",
+  "@resdb:///bcda0bcc22bab28ea4fedae800bfbf9ec76d71cc3b9f851779a35b7e438a839d.otf",
+  "@resdb:///9aee503e8c9126e238639973a7eb7830ae02b4aed2a8f453b0f86300c2b5a9af.ttf",
+];
 
 // Rounded-corner sprite (from Preset Template 2). A 9-slice white-mask PNG with
 // soft rounded corners; tinted by each Image's Tint. Bundled when canvas.rounded.
@@ -325,6 +341,27 @@ let _lastKnobBStateId = "";
 // ButtonValueSet<int>.TargetValue and ValueEqualityDriver<int>.Target.
 let _radioGroupFieldIds: Map<string, string> = new Map();
 
+// Tabs state. Pre-allocated at the top of exportBrsonFile (allocateTabsIds),
+// mirroring _popupActiveIds: a Tabs host serializes BEFORE its page children,
+// yet its ValueEqualityDriver<int>s must reference each page slot's Active
+// field — so those Active field UUIDs are pre-allocated here and the page's
+// slot wrapper reuses its UUID (instead of nextId()) for Active.
+//   _tabPageActiveIds      pageSlotId   → pre-allocated Active field UUID
+//   _tabPageInfo           pageSlotId   → { positional index, initial active }
+//   _tabButtonInfo         buttonSlotId → host id + index + initial active + colors
+//   _tabsSharedFieldByHost hostSlotId   → the shared ValueField<int>.Value id
+//                                         (populated when the host serializes;
+//                                          read by its buttons, which serialize
+//                                          after it)
+interface TabRGBA { r: number; g: number; b: number; a: number }
+let _tabPageActiveIds: Map<string, string> = new Map();
+let _tabPageInfo: Map<string, { index: number; active: boolean }> = new Map();
+let _tabButtonInfo: Map<
+  string,
+  { hostId: string; index: number; active: boolean; activeColor: TabRGBA; inactiveColor: TabRGBA }
+> = new Map();
+let _tabsSharedFieldByHost: Map<string, string> = new Map();
+
 // Pre-computed pixel rect sizes per slot id, populated once at the top of
 // exportBrsonFile. Sized via static RectTransform math (anchors + offsets,
 // ignoring layout containers). Used to auto-size BoxColliders injected by the
@@ -355,6 +392,13 @@ let _popupActiveIds: Map<string, string> = new Map();
 // modal pick up the user's chosen surface / text / accent colors instead of
 // the hardcoded dark-grey + blue defaults from the old design.
 let _exportTheme: import("../model/theme").Theme | null = null;
+
+// Canvas.contentPadding for this export. Read once in exportBrsonFile; nested
+// container padding fields left at the -1 "auto" sentinel inherit half of it
+// (see resolvePad). Body-content side margins are already baked into each
+// element's RectTransform (store.setContentPadding), so this value only feeds
+// the nested-container inheritance — not a second outer inset.
+let _canvasContentPadding = DEFAULT_CONTENT_PADDING;
 
 // Dropdown spawn-window state. Same shape as `_popupActiveIds` but tracks
 // dropdown trigger slots specifically — we keep them separate so the modal
@@ -926,31 +970,33 @@ function buildSharedAssets(rounded = true, customHashes: string[] = [], backLogo
   };
   _fontTxtMatId = fontTxtMatData.ID as string;
 
-  // Single StaticFont — references the bundled font binary via @packdb.
-  // FontChain MainFont + all FallbackFonts all point to this one asset (Resonite's
-  // own Save Object dedups the same way — see SampleFiles/Fixed Export).
-  const sfData: Record<string, unknown> = {
+  // One StaticFont per glyph source. MainFont = the bundled Latin Noto Sans
+  // (@packdb, inside the .zip). FallbackFonts = Resonite's own CJK/symbol/emoji
+  // fonts via @resdb (resolved from the user's local cache). Previously every
+  // fallback pointed back at the Latin font, so any JP/KR/CN text imported as
+  // tofu boxes — this is the fix for that. Same glyph-render config for all
+  // (Padding/PixelRange/GlyphEmSize/MipMaps), only the URL differs.
+  const makeStaticFont = (url: string): Record<string, unknown> => ({
     ...baseStaticFontComp(),
-    URL: fd(BUNDLED_FONT_URL),
+    URL: fd(url),
     Padding: fi(1),
     PixelRange: fi(4),
     GlyphEmSize: fi(32),
     MipMaps: fd(true),
     MipMapFiltering: fd("Box"),
     LODBias: fd(-1),
-  };
-  const sfId = sfData.ID as string;
+  });
+
+  const mainFontData = makeStaticFont(BUNDLED_FONT_URL);
+  const mainFontId = mainFontData.ID as string;
+  const fallbackFontData = CJK_FALLBACK_FONT_URLS.map(makeStaticFont);
 
   const fontChainData: Record<string, unknown> = {
     ...baseAssetComp(false),
-    MainFont: fd(sfId),
-    FallbackFonts: fd([
-      { ID: nextId(), Data: sfId },
-      { ID: nextId(), Data: sfId },
-      { ID: nextId(), Data: sfId },
-      { ID: nextId(), Data: sfId },
-      { ID: nextId(), Data: sfId },
-    ]),
+    MainFont: fd(mainFontId),
+    FallbackFonts: fd(
+      fallbackFontData.map((f) => ({ ID: nextId(), Data: f.ID as string })),
+    ),
   };
   _fontChainId = fontChainData.ID as string;
 
@@ -961,7 +1007,11 @@ function buildSharedAssets(rounded = true, customHashes: string[] = [], backLogo
     { Type: typeIndex("UI_TextUnlitMaterial"), Data: txtMatData },
     { Type: typeIndex("UI_TextUnlitMaterial"), Data: backTxtMatData },
     { Type: typeIndex("UI_TextUnlitMaterial"), Data: fontTxtMatData },
-    { Type: typeIndex("StaticFont"), Data: sfData },
+    { Type: typeIndex("StaticFont"), Data: mainFontData },
+    ...fallbackFontData.map((f) => ({
+      Type: typeIndex("StaticFont"),
+      Data: f,
+    })),
     { Type: typeIndex("FontChain"), Data: fontChainData },
   ];
 
@@ -2117,11 +2167,15 @@ function compSliderFloat(
 }
 
 function layoutBase(p: Record<string, unknown>) {
+  // Each side: explicit (>= 0) wins; the -1 "auto" sentinel / undefined inherits
+  // half the Canvas.contentPadding. The synthetic snap-stack containers pass
+  // explicit 0, so they're unaffected.
+  const cp = _canvasContentPadding;
   return {
-    PaddingTop:    fd((p.paddingTop    as number) ?? 0),
-    PaddingRight:  fd((p.paddingRight  as number) ?? 0),
-    PaddingBottom: fd((p.paddingBottom as number) ?? 0),
-    PaddingLeft:   fd((p.paddingLeft   as number) ?? 0),
+    PaddingTop:    fd(resolvePad(p.paddingTop    as number | undefined, cp)),
+    PaddingRight:  fd(resolvePad(p.paddingRight  as number | undefined, cp)),
+    PaddingBottom: fd(resolvePad(p.paddingBottom as number | undefined, cp)),
+    PaddingLeft:   fd(resolvePad(p.paddingLeft   as number | undefined, cp)),
     Spacing:       fd((p.spacing       as number) ?? 0),
   };
 }
@@ -3665,6 +3719,96 @@ function buildRadioSlot(
   return { components: ordered, dot };
 }
 
+// Tabs host slot — holds the shared selection state + the page-visibility
+// drivers. The host is ALWAYS active, so the per-page ValueEqualityDriver<int>s
+// (which gate each page slot's Active) must live HERE, never on the pages they
+// hide — a component on an inactive slot stops running and would latch a hidden
+// page hidden. Emits:
+//   * RectTransform (the host rect)
+//   * ValueField<int> — the selected tab index, seeded to activeTab. Its
+//     Value-field id is stashed in _tabsSharedFieldByHost so this host's
+//     TabButtons (serialized after it) can ButtonValueSet<int> into it.
+//   * One ValueEqualityDriver<int> per page: (shared == pageIndex) → page.Active.
+//     The page Active field UUIDs were pre-allocated in allocateTabsIds.
+// Page index is positional (host child order), matching the editor + buttons.
+function buildTabsHostComponents(
+  slot: Slot,
+  rtComp: UixComponent,
+  tabsComp: UixComponent,
+): { components: BuiltComp[] } {
+  const tp = tabsComp.props as Record<string, unknown>;
+  const pages = slot.children.filter((ch) => ch.components.some((c) => c.type === "TabPage"));
+  // Clamp to a real page index (mirrors the editor's activeTabIndex). An
+  // out-of-range value (stale save, deleted pages, hand-edited file) would seed
+  // the shared field so NO page's ValueEqualityDriver ever matches → every page
+  // exports Active=false → a blank tabbed group in-game.
+  const activeTab = Math.max(0, Math.min(Math.max(0, pages.length - 1), ((tp.activeTab as number) ?? 0) | 0));
+
+  const vf = compValueFieldInt(activeTab);
+  _tabsSharedFieldByHost.set(slot.id, vf.valueFieldId);
+
+  const out: BuiltComp[] = [];
+  out.push(buildComponent(rtComp));
+  out.push({ Type: typeIndex("ValueFieldInt"), Data: vf.data });
+  pages.forEach((p, i) => {
+    const activeId = _tabPageActiveIds.get(p.id);
+    if (activeId) {
+      out.push({
+        Type: typeIndex("ValueEqualityDriverInt"),
+        Data: compValueEqualityDriverInt(vf.valueFieldId, i, activeId),
+      });
+    }
+  });
+  // Any other host components (rare) pass through; markers are dropped.
+  for (const c of slot.components) {
+    if (c === rtComp || c === tabsComp) continue;
+    if (c.type === "Tabs" || c.type === "TabButton" || c.type === "TabPage") continue;
+    out.push(buildComponent(c));
+  }
+  return { components: out };
+}
+
+// One tab button in a Tabs bar. Reuses the radio selection idiom: on click,
+// ButtonValueSet<int> writes this button's positional index into the host's
+// shared ValueField<int>; a ValueEqualityDriver<int> (shared == index) feeds a
+// BooleanValueDriver<colorX> that flips the button Image.Tint between the
+// inactive and active colors — so the selected tab highlights. The button slot
+// is always active, so hosting its own highlight drivers here is fine.
+function buildTabButtonSlot(
+  slot: Slot,
+  rtComp: UixComponent,
+  imageComp: UixComponent,
+  buttonComp: UixComponent,
+  info: { hostId: string; index: number; active: boolean; activeColor: TabRGBA; inactiveColor: TabRGBA },
+): { components: BuiltComp[] } {
+  const imageBuilt = buildComponent(imageComp);
+  const tintFieldId = ((imageBuilt.Data as Record<string, unknown>).Tint as { ID: string }).ID;
+  const sharedFieldId = _tabsSharedFieldByHost.get(info.hostId);
+
+  const out: BuiltComp[] = [];
+  out.push(buildComponent(rtComp));
+  out.push(imageBuilt);
+  out.push(buildComponent(buttonComp));
+  if (sharedFieldId) {
+    out.push({
+      Type: typeIndex("ButtonValueSetInt"),
+      Data: compButtonValueSetInt(sharedFieldId, info.index),
+    });
+    const bd = compBooleanValueDriverColorX(tintFieldId, info.inactiveColor, info.activeColor, info.active);
+    out.push({
+      Type: typeIndex("ValueEqualityDriverInt"),
+      Data: compValueEqualityDriverInt(sharedFieldId, info.index, bd.stateFieldId),
+    });
+    out.push({ Type: typeIndex("BooleanValueDriverColorX"), Data: bd.data });
+  }
+  for (const c of slot.components) {
+    if (c === rtComp || c === imageComp || c === buttonComp) continue;
+    if (c.type === "TabButton") continue;
+    out.push(buildComponent(c));
+  }
+  return { components: out };
+}
+
 // ReferenceField widget — RefEditor pattern (verified against the "Text to
 // String with Reference Field" example). See inline body for the full wiring.
 // Extracted verbatim from serializeSlot (T4-C1).
@@ -4315,7 +4459,9 @@ function buildScrollAreaSlot(
       const bgTint    = (sap.backgroundTint as { r: number; g: number; b: number; a: number })
         ?? { r: 0.07, g: 0.08, b: 0.11, a: 1 };
       const spacing = (sap.spacing as number) ?? 4;
-      const padding = (sap.padding as number) ?? 8;
+      // Inner padding: explicit (>= 0) wins; -1 "auto" / undefined inherits half
+      // the Canvas.contentPadding (see resolvePad).
+      const padding = resolvePad(sap.padding as number | undefined, _canvasContentPadding);
       const showScrollbar      = (sap.showScrollbar as boolean) ?? true;
       // NOTE: the ported live scrollbar (emitScrollbar) carries its own native
       // Resonite appearance, so the legacy scrollbarTrackTint / scrollbarThumbTint
@@ -4326,8 +4472,10 @@ function buildScrollAreaSlot(
       const trackThickness = 12;
       const thumbPad       = 2;
       // Gutter the content layout adds on the scrollbar side so items don't
-      // overlap the bar. Only on the axis the scrollbar sits.
-      const scrollbarGutter = showScrollbar ? trackThickness + thumbPad + 6 : 0;
+      // overlap the bar. Only on the axis the scrollbar sits. SCROLLBAR_GUTTER
+      // (= trackThickness + thumbPad + 6) is shared with the editor preview so
+      // both inset content identically.
+      const scrollbarGutter = showScrollbar ? SCROLLBAR_GUTTER : 0;
       const gutterRight  = (direction === "Vertical"   || direction === "Both") ? scrollbarGutter : 0;
       const gutterBottom = (direction === "Horizontal" || direction === "Both") ? scrollbarGutter : 0;
 
@@ -4987,8 +5135,26 @@ function serializeSlot(
     const hasDropdown = !!dropdownComp && !!rtComp && !!imageComp && !!buttonComp;
     const hasReferenceField = !!referenceFieldComp && !!rtComp;
     const hasScrollArea = !!scrollAreaComp && !!rtComp;
+    const tabsComp = slot.components.find((c) => c.type === "Tabs");
+    const tabButtonComp = slot.components.find((c) => c.type === "TabButton");
+    const hasTabs = !!tabsComp && !!rtComp;
+    // A tab button carries Image + Button (so it would otherwise match
+    // hasButtonFeedback) — branch it first. Require its pre-allocated info so a
+    // stray marker without a Tabs ancestor harmlessly falls through to generic.
+    const hasTabButton = !!tabButtonComp && !!rtComp && !!imageComp && !!buttonComp && _tabButtonInfo.has(slot.id);
 
-    if (hasBoolToggle) {
+    if (hasTabs) {
+      // Tabs host — shared ValueField<int> + per-page Active drivers. Pages and
+      // the bar serialize normally as children (no reparenting).
+      const tResult = buildTabsHostComponents(slot, rtComp!, tabsComp!);
+      components = tResult.components;
+    } else if (hasTabButton) {
+      // Tab button — ButtonValueSet<int> (select) + highlight driver chain.
+      const tbResult = buildTabButtonSlot(
+        slot, rtComp!, imageComp!, buttonComp!, _tabButtonInfo.get(slot.id)!,
+      );
+      components = tbResult.components;
+    } else if (hasBoolToggle) {
       // Stateful bool-toggle slot (Checkbox + Toggle) — see buildBoolToggleSlot.
       // May pre-serialize a Knob child; preBuiltKnob/Idx are spliced back by
       // the Children mapper below.
@@ -5142,6 +5308,7 @@ function serializeSlot(
         if (c === rtComp || c === imageComp || c === buttonComp) continue;
         if (c.type === "Close" || c.type === "Popup" || c.type === "Spacer") continue;
         if (c.type === "PopupContent" || c.type === "PopupDismiss") continue;
+        if (c.type === "Tabs" || c.type === "TabButton" || c.type === "TabPage") continue;
         ordered.push(buildComponent(c));
       }
       components = ordered;
@@ -5162,6 +5329,9 @@ function serializeSlot(
         // editor-only filler with no FrooxEngine counterpart.
         if (c.type === "Close" || c.type === "Popup" || c.type === "Spacer") continue;
         if (c.type === "PopupContent" || c.type === "PopupDismiss") continue;
+        // Tab markers are lowered by the hasTabs / hasTabButton branches; a page
+        // (TabPage) falls through to here, so drop its marker too.
+        if (c.type === "Tabs" || c.type === "TabButton" || c.type === "TabPage") continue;
         if (c.type === "RadioGroup") {
           const rgp = c.props as Record<string, unknown>;
           const groupId = (rgp.groupId as string) ?? "group1";
@@ -5300,12 +5470,20 @@ function serializeSlot(
   // Shared with the editor hierarchy via controlDisplayName.
   const exportName = isTextLabelSlot ? "🖋 Label" : controlDisplayName(slot);
 
+  // A Tabs page reuses its pre-allocated Active field UUID (so the host's
+  // ValueEqualityDriver<int> can drive it) and starts visible only if it's the
+  // initially-selected tab.
+  const tabPageActiveId = _tabPageActiveIds.get(slot.id);
+  const activeField = tabPageActiveId
+    ? { ID: tabPageActiveId, Data: _tabPageInfo.get(slot.id)?.active ?? false }
+    : { ID: nextId(), Data: true };
+
   return {
     ID: slotId,
     Components: { ID: compListId, Data: components },
     Name:           { ID: nextId(), Data: exportName },
     Tag:            { ID: nextId(), Data: null },
-    Active:         { ID: nextId(), Data: true },
+    Active:         activeField,
     "Persistent-ID": nextId(),
     Position:       { ID: nextId(), Data: vec3(slot.position?.x ?? 0, slot.position?.y ?? 0, slot.position?.z ?? 0) },
     Rotation:       { ID: nextId(), Data: vec4(slot.rotation?.x ?? 0, slot.rotation?.y ?? 0, slot.rotation?.z ?? 0, slot.rotation?.w ?? 1) },
@@ -6815,7 +6993,16 @@ export async function exportBrsonFile(
   _radioGroupFieldIds = new Map();
   _popupActiveIds = new Map();
   _dropdownActiveIds = new Map();
+  _tabPageActiveIds = new Map();
+  _tabPageInfo = new Map();
+  _tabButtonInfo = new Map();
+  _tabsSharedFieldByHost = new Map();
   _exportTheme = doc.theme ?? null;
+  _canvasContentPadding = (() => {
+    const cc = doc.root.components.find((c) => c.type === "Canvas");
+    const v = (cc?.props as { contentPadding?: number } | undefined)?.contentPadding;
+    return typeof v === "number" ? v : DEFAULT_CONTENT_PADDING;
+  })();
   _dropdownValueFieldIds = new Map();
   _dropdownTextContentIds = new Map();
   _valueVarNames = new Set();
@@ -6858,6 +7045,37 @@ export async function exportBrsonFile(
       _dropdownActiveIds.set(slot.id, nextId());
     }
     for (const child of slot.children) allocateDropdownIds(child);
+  })(doc.root);
+
+  // Tabs: pre-allocate each page slot's Active field UUID and record the
+  // positional index ↔ slot mapping for both pages and buttons, so the host's
+  // page-Active drivers (built when the host serializes, before its pages) and
+  // each button's ButtonValueSet index line up. Buttons live under the host's
+  // "Tab Bar" child; pages are the host's TabPage children — both in array
+  // order. The shared ValueField id itself is allocated when the host
+  // serializes (compValueFieldInt) and stashed in _tabsSharedFieldByHost.
+  (function allocateTabsIds(slot: import("../model/types").Slot) {
+    const tabsComp = slot.components.find((c) => c.type === "Tabs");
+    if (tabsComp) {
+      const tp = tabsComp.props as Record<string, unknown>;
+      const activeColor = (tp.activeColor as TabRGBA) ?? { r: 0.18, g: 0.36, b: 0.60, a: 1 };
+      const inactiveColor = (tp.inactiveColor as TabRGBA) ?? { r: 0.14, g: 0.16, b: 0.20, a: 1 };
+      const pages = slot.children.filter((ch) => ch.components.some((c) => c.type === "TabPage"));
+      // Clamp to a valid page index — must match buildTabsHostComponents so the
+      // initially-Active page and the seeded shared field agree.
+      const activeTab = Math.max(0, Math.min(Math.max(0, pages.length - 1), ((tp.activeTab as number) ?? 0) | 0));
+      pages.forEach((p, i) => {
+        _tabPageActiveIds.set(p.id, nextId());
+        _tabPageInfo.set(p.id, { index: i, active: i === activeTab });
+      });
+      // The bar is the host child whose own children are the TabButtons.
+      const bar = slot.children.find((ch) => ch.children.some((g) => g.components.some((c) => c.type === "TabButton")));
+      const buttons = bar ? bar.children.filter((g) => g.components.some((c) => c.type === "TabButton")) : [];
+      buttons.forEach((b, i) => {
+        _tabButtonInfo.set(b.id, { hostId: slot.id, index: i, active: i === activeTab, activeColor, inactiveColor });
+      });
+    }
+    for (const child of slot.children) allocateTabsIds(child);
   })(doc.root);
 
   // Pull canvas.rounded from the doc — controls whether the rounded-corner

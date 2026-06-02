@@ -3,10 +3,13 @@ import { useStore } from "../state/store";
 import { collectWarnings, type DocWarning } from "../model/warnings";
 import { listImages, subscribeImageStore } from "../io/imageStore";
 import { useDismissable } from "./useDismissable";
+import { useT } from "../locale/useT";
 
 export default function WarningsMenu() {
   const root = useStore((s) => s.root);
   const select = useStore((s) => s.select);
+  const language = useStore((s) => s.language);
+  const t = useT();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const [imageHashes, setImageHashes] = useState<ReadonlySet<string> | null>(null);
@@ -26,7 +29,10 @@ export default function WarningsMenu() {
     };
   }, []);
 
-  const warnings = useMemo(() => collectWarnings(root, imageHashes), [root, imageHashes]);
+  const warnings = useMemo(
+    () => collectWarnings(root, imageHashes, language),
+    [root, imageHashes, language],
+  );
 
   const close = useCallback(() => setOpen(false), []);
   useDismissable(open, close, ref);
@@ -45,7 +51,7 @@ export default function WarningsMenu() {
       <button
         onClick={() => setOpen((v) => !v)}
         className={`rounded border px-2 py-1 text-xs transition ${tone}`}
-        title={`${warningCount} warning${warningCount === 1 ? "" : "s"}, ${infoCount} note${infoCount === 1 ? "" : "s"} — click to review`}
+        title={t.warnings.summary(warningCount, infoCount)}
       >
         ⚠ {warnings.length}
       </button>
@@ -54,23 +60,23 @@ export default function WarningsMenu() {
         <div className="absolute left-0 top-[calc(100%+4px)] z-50 w-80 rounded border border-slate-700 bg-slate-900 text-xs shadow-xl">
           <div className="border-b border-slate-800 px-3 py-2">
             <div className="text-[10px] uppercase tracking-wide text-slate-500">
-              Issues
+              {t.warnings.issues}
             </div>
             <div className="mt-0.5 text-slate-300">
               {warningCount > 0 && (
                 <span className="text-amber-300">
-                  {warningCount} warning{warningCount === 1 ? "" : "s"}
+                  {t.warnings.warningCount(warningCount)}
                 </span>
               )}
               {warningCount > 0 && infoCount > 0 && <span className="text-slate-600"> · </span>}
               {infoCount > 0 && (
                 <span className="text-sky-300">
-                  {infoCount} note{infoCount === 1 ? "" : "s"}
+                  {t.warnings.noteCount(infoCount)}
                 </span>
               )}
             </div>
             <div className="mt-1 text-[10px] text-slate-500">
-              Export still works — these are heads-ups, not blockers.
+              {t.warnings.exportNote}
             </div>
           </div>
 
@@ -99,12 +105,13 @@ function WarningRow({
   warning: DocWarning;
   onSelect: () => void;
 }) {
+  const t = useT();
   const isWarn = warning.severity === "warning";
   return (
     <button
       onClick={onSelect}
       className="flex w-full items-start gap-2 border-b border-slate-800 px-3 py-2 text-left last:border-b-0 hover:bg-slate-800/40"
-      title="Select this slot in the hierarchy"
+      title={t.warnings.selectSlot}
     >
       <span
         className={`mt-0.5 inline-block flex-shrink-0 text-sm ${

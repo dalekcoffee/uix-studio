@@ -71,7 +71,9 @@ export const PALETTE_GROUPS: ReadonlyArray<PaletteGroup> = [
     label: "Layout",
     // Spacer = an empty invisible row that reserves vertical space; handy for
     // adding gaps between rows when arranging in snap mode.
-    types: ["Spacer", "VerticalLayout", "HorizontalLayout", "GridLayout"],
+    // Tabs = a multi-page container (one page visible at a time) built as a full
+    // widget subtree by widgets.ts buildTabs.
+    types: ["Tabs", "Spacer", "VerticalLayout", "HorizontalLayout", "GridLayout"],
   },
 ];
 

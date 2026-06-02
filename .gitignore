@@ -37,6 +37,15 @@ backup-*.zip
 # Personal working notes
 OVERNIGHT_NOTES.md
 
+# Internal evaluation / review reports (not part of the app)
+PROJECT_EVALUATION.html
+SECURITY-REVIEW.html
+
+# Stray reference images (not app assets)
+Images/15oz-insulated-tumbler-3.jpg
+Images/images.jpg
+Images/transcode.jpg
+
 # Claude Code project tool config (local only). CLAUDE.md is committed as
 # project documentation — it captures the reverse-engineered Resonite format.
 .claude/

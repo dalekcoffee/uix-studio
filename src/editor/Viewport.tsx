@@ -11,11 +11,14 @@ import { findActivePopupCard } from "./render/popupEdit";
 import { computeChildRect, getRectTransform } from "./render/rectTransform";
 import { snapFitness } from "./render/snapFlow";
 import { dragController } from "./dragController";
+import { useT } from "../locale/useT";
 
 export default function Viewport() {
+  const t = useT();
   const root = useStore((s) => s.root);
   const selectedSlotId = useStore((s) => s.selectedSlotId);
   const select = useStore((s) => s.select);
+  const editingPopupId = useStore((s) => s.editingPopupId);
   const viewport = useStore((s) => s.viewport);
   const setViewport = useStore((s) => s.setViewport);
   const resetViewport = useStore((s) => s.resetViewport);
@@ -128,13 +131,13 @@ export default function Viewport() {
   // user can always tell what they're about to edit/resize (catches the
   // "I grabbed the backing by accident" confusion early).
   const selectedLabel = useMemo(() => {
-    if (!selectedSlotId) return "nothing selected";
+    if (!selectedSlotId) return t.viewport.nothingSelected;
     const slot = findSlot(root, selectedSlotId);
-    if (!slot) return "nothing selected";
+    if (!slot) return t.viewport.nothingSelected;
     const skip = new Set(["RectTransform", "LayoutElement", "BoxCollider"]);
     const primary = slot.components.find((c) => !skip.has(c.type))?.type;
     return primary ? `${slot.name} · ${primary}` : slot.name;
-  }, [root, selectedSlotId]);
+  }, [root, selectedSlotId, t]);
 
   const padding = 32;
   const avail = {
@@ -170,9 +173,12 @@ export default function Viewport() {
     if (popupHostId) ensurePopupContent(popupHostId);
   }, [popupHostId, ensurePopupContent]);
 
+  // The lifted card is driven by the EXPLICIT edit mode (editingPopupId), not by
+  // selection — so selecting the trigger button just selects it (resizable) and
+  // the editor only appears when the user clicks "Edit popup" in the Inspector.
   const popupCard = useMemo(
-    () => findActivePopupCard(root, selectedSlotId),
-    [root, selectedSlotId],
+    () => findActivePopupCard(root, editingPopupId),
+    [root, editingPopupId],
   );
 
   // Margins/bands used by both the placement shift and the pan-to-make-room
@@ -424,7 +430,7 @@ export default function Viewport() {
       {/* Floating viewport controls */}
       <div className="absolute right-2 top-2 flex items-center gap-1 rounded border border-slate-700 bg-slate-900/90 px-2 py-1 text-xs shadow-lg backdrop-blur">
         <button
-          title="Zoom out"
+          title={t.viewport.zoomOut}
           onClick={() =>
             setViewport({ zoom: Math.max(0.1, Math.round(viewport.zoom * 10 - 1) / 10) })
           }
@@ -435,12 +441,12 @@ export default function Viewport() {
         <button
           onClick={resetViewport}
           className="min-w-[3rem] rounded px-1 text-slate-200 hover:bg-slate-700"
-          title="Reset view (fit)"
+          title={t.viewport.resetView}
         >
           {Math.round(viewport.zoom * 100)}%
         </button>
         <button
-          title="Zoom in"
+          title={t.viewport.zoomIn}
           onClick={() =>
             setViewport({ zoom: Math.min(8, Math.round(viewport.zoom * 10 + 1) / 10) })
           }
@@ -449,16 +455,16 @@ export default function Viewport() {
           +
         </button>
         <button
-          title="Recenter canvas (F)"
+          title={t.viewport.recenterTip}
           onClick={resetViewport}
           className="rounded px-1.5 text-slate-300 hover:bg-slate-700"
         >
-          ⊙ Recenter
+          {t.viewport.recenter}
         </button>
         <div className="mx-1 h-4 w-px bg-slate-700" />
         <label
           className="flex cursor-pointer items-center gap-1 text-slate-300"
-          title="Snap to grid"
+          title={t.viewport.snapToGrid}
         >
           <input
             type="checkbox"
@@ -466,7 +472,7 @@ export default function Viewport() {
             onChange={(e) => setSnap({ enabled: e.target.checked })}
             className="h-3 w-3"
           />
-          <span>Grid</span>
+          <span>{t.viewport.grid}</span>
         </label>
         {snap.enabled && (
           <input
@@ -476,50 +482,50 @@ export default function Viewport() {
             value={snap.size}
             onChange={(e) => setSnap({ size: Math.max(1, Number(e.target.value) || 1) })}
             className="w-12 rounded border border-slate-700 bg-slate-800 px-1 text-slate-100"
-            title="Grid size (px)"
+            title={t.viewport.gridSize}
           />
         )}
         <div className="mx-1 h-4 w-px bg-slate-700" />
         {/* Edit mode: Snap (block-editor reorder) vs Free (absolute drag) */}
         <div
           className="flex items-center overflow-hidden rounded border border-slate-700"
-          title="Snap: dragging a block reorders it and shifts the others out of the way. Free: drag to any position."
+          title={t.viewport.modeToggleTip}
         >
           <button
             onClick={switchToSnap}
             className={`px-1.5 py-0.5 ${editMode === "snap" ? "bg-sky-600 text-white" : "text-slate-300 hover:bg-slate-700"}`}
           >
-            ▤ Snap
+            ▤ {t.modeSwitch.snap}
           </button>
           <button
             onClick={switchToFree}
             className={`px-1.5 py-0.5 ${editMode === "free" ? "bg-sky-600 text-white" : "text-slate-300 hover:bg-slate-700"}`}
           >
-            ✥ Free
+            ✥ {t.modeSwitch.free}
           </button>
         </div>
         {snapPoorFit && editMode === "snap" && (
           <span
             className="flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-300"
-            title="This template's elements overlap or there's only one block to move, so Snap reordering won't help much (and may shift things around). Free mode lets you position each element precisely."
+            title={t.viewport.snapPoorFitTip}
           >
-            ℹ Tip: this template is easier to edit in Free mode
+            {t.viewport.snapPoorFitBadge}
           </span>
         )}
         {editMode === "snap" && (
           <>
             <button
               onClick={autoArrange}
-              title="Tidy the rows into a clean vertical stack — removes overlaps and evens out spacing"
+              title={t.viewport.autoArrangeTip}
               className="rounded border border-slate-700 bg-slate-800 px-1.5 py-0.5 text-slate-200 hover:border-sky-500 hover:text-sky-200"
             >
-              ⤓ Auto-arrange
+              {t.viewport.autoArrange}
             </button>
             <label
               className="flex cursor-pointer items-center gap-1 text-slate-300"
-              title="Vertical gap (px) kept between stacked rows when reflowing in Snap mode"
+              title={t.viewport.gapTip}
             >
-              <span>Gap</span>
+              <span>{t.viewport.gap}</span>
               <input
                 type="number"
                 min={0}
@@ -535,7 +541,7 @@ export default function Viewport() {
         )}
         <label
           className="flex cursor-pointer items-center gap-1 text-slate-300"
-          title="When resizing the Canvas (select it, then drag a handle): OFF = elements keep their size, the canvas just gains/loses empty space; ON = scale every child proportionally so the whole panel grows/shrinks uniformly."
+          title={t.viewport.scaleContentsTip}
         >
           <input
             type="checkbox"
@@ -543,12 +549,12 @@ export default function Viewport() {
             onChange={(e) => setScaleCanvasContents(e.target.checked)}
             className="h-3 w-3"
           />
-          <span>Scale contents</span>
+          <span>{t.viewport.scaleContents}</span>
         </label>
         <div className="mx-1 h-4 w-px bg-slate-700" />
         <label
           className="flex cursor-pointer items-center gap-1 text-slate-300"
-          title="Show per-element outlines, layout labels, and the image-placeholder hatched fill (editor-only overlays)"
+          title={t.viewport.overlayTip}
         >
           <input
             type="checkbox"
@@ -556,20 +562,20 @@ export default function Viewport() {
             onChange={toggleOverlays}
             className="h-3 w-3"
           />
-          <span>Overlay</span>
+          <span>{t.viewport.overlay}</span>
         </label>
       </div>
 
       <div className="absolute bottom-2 left-3 flex items-center gap-2 rounded bg-white/60 px-2 py-1 text-[10px] text-slate-600 backdrop-blur">
         <span>
-          Canvas {canvasSize.w}×{canvasSize.h} @ {(scale * 100).toFixed(0)}%
+          {t.viewport.canvasStatus(canvasSize.w, canvasSize.h, (scale * 100).toFixed(0))}
         </span>
         <span className="text-slate-400">·</span>
-        <span>zoom {viewport.zoom.toFixed(2)}×</span>
+        <span>{t.viewport.zoomStatus(viewport.zoom.toFixed(2))}</span>
         <span className="text-slate-400">·</span>
-        <span>{snap.enabled ? `snap ${snap.size}px` : "snap off"}</span>
+        <span>{snap.enabled ? t.viewport.snapStatus(snap.size) : t.viewport.snapOff}</span>
         <span className="text-slate-400">·</span>
-        <span className="font-medium text-sky-700" title="Currently selected slot">
+        <span className="font-medium text-sky-700" title={t.viewport.selectedSlotTip}>
           {selectedLabel}
         </span>
       </div>
