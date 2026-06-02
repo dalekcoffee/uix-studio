@@ -369,6 +369,15 @@ let _tabsSharedFieldByHost: Map<string, string> = new Map();
 // rect can't be derived (e.g. nested under unknown parent).
 let _slotRectSizes: Map<string, { w: number; h: number }> = new Map();
 
+// Canvas.stackLayout (Snap mode) — true when the panel should be lowered into
+// real VerticalLayout hierarchies so editing a slot's OrderOffset in Resonite
+// physically reorders it. Read once at the top of exportBrsonFile from the
+// Canvas component. buildRootWrapper uses it to lower the top-level canvas
+// children (buildContainerStack); serializeSlot uses it to give each Tabs page
+// the same treatment so controls *inside a tab* are reorderable too. Free mode
+// (false) keeps everything absolute.
+let _stackLayoutOn = true;
+
 // The pill SpriteProvider FixedSize the Background/Front Backing use, so any
 // Image flagged `matchPanelCorners` can round its panel-edge corners to the
 // SAME absolute radius as the panel rather than one proportional to its own
@@ -696,14 +705,27 @@ function computeCanvasRelativeRectFor(
   const canvasComp = canvas.components.find((c) => c.type === "Canvas");
   const canvasW = (canvasComp?.props as { sizeX?: number } | undefined)?.sizeX ?? 800;
   const canvasH = (canvasComp?.props as { sizeY?: number } | undefined)?.sizeY ?? 600;
+  return computeRelativeRectFor(canvas, canvasW, canvasH, targetId);
+}
 
+// Generalized form of computeCanvasRelativeRectFor: walks down from any
+// container slot (treated as the origin rect 0,0,containerW,containerH — its
+// own RectTransform is NOT applied) and returns the target descendant's rect in
+// container-local Y-UP pixel coords. Used to stack the children of a Tabs page
+// the same way buildContainerStack stacks the canvas's children.
+function computeRelativeRectFor(
+  container: import("../model/types").Slot,
+  containerW: number,
+  containerH: number,
+  targetId: string,
+): { left: number; bottom: number; right: number; top: number } | null {
   function walk(
     slot: import("../model/types").Slot,
     parent: { left: number; bottom: number; right: number; top: number },
   ): { left: number; bottom: number; right: number; top: number } | null {
     const rt = slot.components.find((c) => c.type === "RectTransform");
     let rect = parent;
-    if (rt && slot !== canvas) {
+    if (rt && slot !== container) {
       const p = rt.props as {
         anchorMin?: { x: number; y: number };
         anchorMax?: { x: number; y: number };
@@ -730,7 +752,7 @@ function computeCanvasRelativeRectFor(
     }
     return null;
   }
-  return walk(canvas, { left: 0, bottom: 0, right: canvasW, top: canvasH });
+  return walk(container, { left: 0, bottom: 0, right: containerW, top: containerH });
 }
 
 /** Extracts the optional user-set back-logo hash from the canvas component
@@ -5523,6 +5545,25 @@ function serializeSlot(
       if (_phImg && _phImg.useImagePlaceholder === true && _phImg.placeholderRemoved !== true && !_phImg.customImageHash && _imageIconSpriteId) {
         out.push(buildPlaceholderIconSlot(slotId));
       }
+      // Snap mode (Canvas.stackLayout): lower a Tabs page's own children into a
+      // VerticalLayout-driven "Content" slot — the same treatment
+      // buildContainerStack gives the canvas — so editing a control's OrderOffset
+      // INSIDE a tab (or adding controls later) actually reorders it in Resonite.
+      // Without this the page's children stay absolutely positioned and their
+      // OrderOffset is inert. The page keeps its own background Image (a component
+      // on this slot); the new Content child only carries the layout. flowAll
+      // skips chrome detection (a page has no Background/header/footer bars).
+      if (_stackLayoutOn && slot.components.some((c) => c.type === "TabPage")) {
+        const n = slot.children.length;
+        if (n > 0) {
+          const pageSize = _slotRectSizes.get(slot.id) ?? { w: 720, h: 400 };
+          const lowered = buildContainerStack(
+            slot, out.slice(0, n), slotId, pageSize.w, pageSize.h,
+            { flowAll: true, tag: "uixstudio-tabstack" },
+          );
+          out.splice(0, n, ...lowered);
+        }
+      }
       assignOrderOffsets(out);
       return out;
     })(),
@@ -6533,33 +6574,44 @@ function groupExportRows(items: FlowItem[]): FlowItem[][] {
   return rows;
 }
 
-// Restructure the canvas's serialized children into [structural…, Content stack].
-// `serChildren` is 1:1 (by index, in order) with canvasSlot.children.
-function buildCanvasStack(
-  canvasSlot: Slot,
+// Restructure a container's serialized children into [structural…, Content stack].
+// `serChildren` is 1:1 (by index, in order) with `container.children`.
+//
+// Used for two containers:
+//  • the Canvas (default opts) — separates structural chrome + edge-pinned bars
+//    from the flow, returns [...structural, ...pinned, Content].
+//  • a Tabs page (opts.flowAll) — pages carry no chrome and every child should
+//    be reorderable, so chrome detection is skipped and the result is just
+//    [Content]. Without this, controls *inside a tab* stayed absolute and
+//    editing their OrderOffset in Resonite did nothing.
+function buildContainerStack(
+  container: Slot,
   serChildren: Record<string, unknown>[],
-  canvasId: string,
-  canvasW: number,
-  canvasH: number,
+  containerId: string,
+  containerW: number,
+  containerH: number,
+  opts?: { flowAll?: boolean; tag?: string },
 ): Record<string, unknown>[] {
-  const src = canvasSlot.children;
+  const flowAll = opts?.flowAll === true;
+  const contentTag = opts?.tag ?? "uixstudio-stack";
+  const src = container.children;
   const structural: Record<string, unknown>[] = [];
-  // Edge-pinned rows kept ABSOLUTE (direct canvas children at their authored
+  // Edge-pinned rows kept ABSOLUTE (direct container children at their authored
   // RectTransform), NOT lowered into the stack: a full-width top bar (header)
   // stays edge-to-edge, and a bottom-anchored bar (buttons) stays pinned to the
   // bottom. Everything else flows in the VerticalLayout. This keeps the export
   // matching the editor: body rows get their authored side margins (the header
   // no longer collapses padLeft to 0), and the bottom bar doesn't leave a gap
-  // beneath it.
+  // beneath it. (Skipped for tab pages — flowAll — which have no such chrome.)
   const pinned: Record<string, unknown>[] = [];
-  let bottomReserve = 0; // canvas px of bottom space occupied by bottom-pinned bars
+  let bottomReserve = 0; // container px of bottom space occupied by bottom-pinned bars
   const flow: FlowItem[] = [];
   for (let i = 0; i < src.length; i++) {
     const ser = serChildren[i];
     if (!ser) continue;
-    if (isStructuralSlot(src[i])) { structural.push(ser); continue; }
-    const size = _slotRectSizes.get(src[i].id) ?? { w: canvasW, h: 40 };
-    const rect = computeCanvasRelativeRectFor(canvasSlot, src[i].id);
+    if (!flowAll && isStructuralSlot(src[i])) { structural.push(ser); continue; }
+    const size = _slotRectSizes.get(src[i].id) ?? { w: containerW, h: 40 };
+    const rect = computeRelativeRectFor(container, containerW, containerH, src[i].id);
     const rt = src[i].components.find((c) => c.type === "RectTransform")?.props as
       | { anchorMin?: { x: number; y: number }; anchorMax?: { x: number; y: number };
           offsetMin?: { x: number }; offsetMax?: { x: number } }
@@ -6577,8 +6629,8 @@ function buildCanvasStack(
     const isFullBleedTop =
       aMaxY > 0.99 && aMinY > 0.99 &&
       aMinX < 0.01 && aMaxX > 0.99 && Math.abs(oMinX) < 1 && Math.abs(oMaxX) < 1;
-    if (isBottomPinned || isFullBleedTop) {
-      pinned.push(ser); // keep authored RT + ParentReference=canvasId
+    if (!flowAll && (isBottomPinned || isFullBleedTop)) {
+      pinned.push(ser); // keep authored RT + ParentReference=containerId
       if (isBottomPinned && rect) bottomReserve = Math.max(bottomReserve, Math.round(rect.top));
       continue;
     }
@@ -6597,9 +6649,9 @@ function buildCanvasStack(
   }>;
   let padTop = 0, padLeft = 0, padRight = 0, spacing = 8;
   if (allRects.length > 0) {
-    padTop = Math.max(0, Math.round(canvasH - Math.max(...allRects.map((r) => r.top))));
+    padTop = Math.max(0, Math.round(containerH - Math.max(...allRects.map((r) => r.top))));
     padLeft = Math.max(0, Math.round(Math.min(...allRects.map((r) => r.left))));
-    padRight = Math.max(0, Math.round(canvasW - Math.max(...allRects.map((r) => r.right))));
+    padRight = Math.max(0, Math.round(containerW - Math.max(...allRects.map((r) => r.right))));
     if (rows.length >= 2) {
       const rowTop = (row: FlowItem[]) => Math.max(...row.map((it) => it.rect ? it.rect.top : -Infinity));
       const rowBottom = (row: FlowItem[]) => Math.min(...row.map((it) => it.rect ? it.rect.bottom : Infinity));
@@ -6623,7 +6675,7 @@ function buildCanvasStack(
     forceExpandWidth: true, forceExpandHeight: false,
   });
 
-  const contentW = Math.max(1, canvasW - padLeft - padRight);
+  const contentW = Math.max(1, containerW - padLeft - padRight);
 
   const stackChildren: Record<string, unknown>[] = rows.map((row) => {
     if (row.length === 1) {
@@ -6747,18 +6799,18 @@ function buildCanvasStack(
       { Type: typeIndex("VerticalLayout"), Data: vLayout },
     ] },
     Name:           { ID: nextId(), Data: "Content" },
-    Tag:            { ID: nextId(), Data: "uixstudio-stack" },
+    Tag:            { ID: nextId(), Data: contentTag },
     Active:         { ID: nextId(), Data: true },
     "Persistent-ID": nextId(),
     Position:       { ID: nextId(), Data: vec3(0, 0, 0) },
     Rotation:       { ID: nextId(), Data: vec4(0, 0, 0, 1) },
     Scale:          { ID: nextId(), Data: vec3(1, 1, 1) },
     OrderOffset:    { ID: nextId(), Data: Long.fromNumber(0) },
-    ParentReference: canvasId,
+    ParentReference: containerId,
     Children: stackChildren,
   };
 
-  return [...structural, ...pinned, contentSlot];
+  return flowAll ? [contentSlot] : [...structural, ...pinned, contentSlot];
 }
 
 function buildRootWrapper(canvasSlot: Slot): Record<string, unknown> {
@@ -6782,10 +6834,8 @@ function buildRootWrapper(canvasSlot: Slot): Record<string, unknown> {
   // non-structural top-level children into a VerticalLayout-driven Content slot
   // so in-game reordering moves them. Must run BEFORE the overlay pushes below
   // so the popup/dropdown containers append after the stack (and stay on top).
-  const stackCanvasComp = canvasSlot.components.find((c) => c.type === "Canvas");
-  const stackLayoutOn = (stackCanvasComp?.props as { stackLayout?: boolean } | undefined)?.stackLayout !== false;
-  if (stackLayoutOn) {
-    const lowered = buildCanvasStack(canvasForSer, canvasChildren, canvasId, canvasRect.w, canvasRect.h);
+  if (_stackLayoutOn) {
+    const lowered = buildContainerStack(canvasForSer, canvasChildren, canvasId, canvasRect.w, canvasRect.h);
     (canvasChild as { Children: Record<string, unknown>[] }).Children = lowered;
     canvasChildren = lowered;
   }
@@ -7002,6 +7052,10 @@ export async function exportBrsonFile(
     const cc = doc.root.components.find((c) => c.type === "Canvas");
     const v = (cc?.props as { contentPadding?: number } | undefined)?.contentPadding;
     return typeof v === "number" ? v : DEFAULT_CONTENT_PADDING;
+  })();
+  _stackLayoutOn = (() => {
+    const cc = doc.root.components.find((c) => c.type === "Canvas");
+    return (cc?.props as { stackLayout?: boolean } | undefined)?.stackLayout !== false;
   })();
   _dropdownValueFieldIds = new Map();
   _dropdownTextContentIds = new Map();
