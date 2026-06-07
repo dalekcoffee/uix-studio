@@ -6624,11 +6624,25 @@ function buildContainerStack(
     const oMaxX = rt?.offsetMax?.x ?? 0;
     // Bottom-anchored bar (e.g. bottomRT buttons): both Y anchors ≈ 0.
     const isBottomPinned = aMinY < 0.01 && aMaxY < 0.01;
-    // Full-width top bar (e.g. the header): X stretch 0→1 with ~0 side offsets,
-    // top-anchored. Stays full-bleed instead of being inset by the content pad.
-    const isFullBleedTop =
-      aMaxY > 0.99 && aMinY > 0.99 &&
+    // Full-width top bar (e.g. the header): X stretch 0→1 with ~0 side offsets.
+    // Stays full-bleed instead of being inset by the content pad — and, crucially,
+    // is kept OUT of the flow so its left=0/right=W edges don't drag padLeft/
+    // padRight down to 0 for the whole stack (that's what silently dropped the
+    // body side-margins on the checklist/rating presets).
+    //
+    // Two authoring styles produce the same visual bar and BOTH must be caught:
+    //  • top-anchored (template.ts topRT → aMinY≈aMaxY≈1)
+    //  • full-height stretch (presets' rectRT(...,0,0,W,h) → aMinY=0, aMaxY=1)
+    // The stretch style fails an anchor-only test, so also accept it by geometry:
+    // the rect's top edge hugs the canvas top (Y-up top ≈ containerH) AND it only
+    // occupies a thin top band (so a genuine full-canvas body layer isn't mistaken
+    // for chrome).
+    const isFullWidth =
       aMinX < 0.01 && aMaxX > 0.99 && Math.abs(oMinX) < 1 && Math.abs(oMaxX) < 1;
+    const isTopAnchored = aMaxY > 0.99 && aMinY > 0.99;
+    const isTopFlushThinBar =
+      !!rect && (containerH - rect.top) < 2 && (rect.top - rect.bottom) < containerH * 0.4;
+    const isFullBleedTop = isFullWidth && (isTopAnchored || isTopFlushThinBar);
     if (!flowAll && (isBottomPinned || isFullBleedTop)) {
       pinned.push(ser); // keep authored RT + ParentReference=containerId
       if (isBottomPinned && rect) bottomReserve = Math.max(bottomReserve, Math.round(rect.top));
