@@ -10,9 +10,9 @@ type Target = Exclude<Lang, "en">;
 
 const GROUP_LABELS: Record<string, Record<Target, string>> = {
   Visuals: { ko: "비주얼", es: "Visuales", ja: "ビジュアル" },
-  Controls: { ko: "컨트롤", es: "Controles", ja: "コントロール" },
+  Inputs: { ko: "입력", es: "Entradas", ja: "入力" },
   Interaction: { ko: "상호작용", es: "Interacción", ja: "操作" },
-  Layout: { ko: "레이아웃", es: "Diseño", ja: "レイアウト" },
+  Containers: { ko: "컨테이너", es: "Contenedores", ja: "コンテナ" },
 };
 
 const COMPONENT_LABELS: Record<string, Record<Target, string>> = {
@@ -30,6 +30,8 @@ const COMPONENT_LABELS: Record<string, Record<Target, string>> = {
   TextField: { ko: "입력 필드", es: "Campo de entrada", ja: "入力フィールド" },
   ScrollArea: { ko: "스크롤 영역", es: "Área de desplazamiento", ja: "スクロール領域" },
   ReferenceField: { ko: "참조 필드", es: "Campo de referencia", ja: "参照フィールド" },
+  Waveform: { ko: "파형", es: "Forma de onda", ja: "波形" },
+  UserProfile: { ko: "사용자 프로필", es: "Perfil de usuario", ja: "ユーザープロフィール" },
   Button: { ko: "버튼", es: "Botón", ja: "ボタン" },
   Hyperlink: { ko: "하이퍼링크", es: "Hipervínculo", ja: "ハイパーリンク" },
   Popup: { ko: "팝업", es: "Ventana emergente", ja: "ポップアップ" },

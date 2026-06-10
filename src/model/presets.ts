@@ -2656,6 +2656,306 @@ function buildShowcasePanel(): Slot {
   );
 }
 
+// ── Frequency Link (music visualizer) ────────────────────────────────────────
+// A wide audio-visualizer dashboard inspired by Resonite "FrequencyLink"-style
+// panels: a top tab strip, a row of 8 tall VERTICAL progress bars (one per
+// frequency channel), 8 color pickers beneath them that live-drive each bar's
+// fill color (ValueCopy<colorX>, wired by `colorLinkId`/`linkId`), an Output
+// placeholder strip, and a Volume slider with a float input that both shows and
+// sets the value (two-way ValueCopy<float>, wired by `linkId`/`bindSliderId`).
+// Snap (stack) by default — loads reorderable in Snap mode; the snap export
+// lowering groups the side-by-side bars/pickers into rows. Only the
+// Frequencies page is built out for now; Settings/Credits are empty pages.
+function buildFrequencyLinkPanel(): Slot {
+  const W = 1180, H = 840;
+  const WHITE = rgb(0.95, 0.95, 0.95);
+  const MUTED = rgb(0.62, 0.66, 0.72);
+  const PANEL_BG = rgb(0.05, 0.06, 0.07);
+  const TRACK_BG = rgb(0.13, 0.15, 0.17);
+  const INPUT_BG = rgb(0.12, 0.13, 0.15);
+  // Rainbow channel palette (matches the reference's cyan→green sweep).
+  const CHANNEL = [
+    rgb(0.36, 0.84, 0.94), // 0 cyan
+    rgb(0.55, 0.66, 0.95), // 1 periwinkle
+    rgb(0.65, 0.47, 0.91), // 2 purple
+    rgb(0.80, 0.52, 0.90), // 3 violet
+    rgb(0.96, 0.64, 0.55), // 4 salmon
+    rgb(0.96, 0.80, 0.44), // 5 gold
+    rgb(0.96, 0.93, 0.62), // 6 pale yellow
+    rgb(0.66, 0.88, 0.63), // 7 green
+  ];
+  // Demo bar fills (varied, like a frozen spectrum frame).
+  const DEMO = [0.55, 0.82, 0.40, 0.66, 0.30, 0.72, 0.50, 0.88];
+
+  // Segmented tab style: a pill selector with no frame card and seamless
+  // (background-less) pages. The active segment is a highlighted pill; inactive
+  // segments are transparent. (Exact white-pill/dark-text like the reference
+  // needs per-selection label-color driving — a follow-up; white labels read on
+  // both states here.)
+  const TAB_BAR = 46, TAB_GAP = 12;            // strip height + gap below it
+  const tabActive   = rgb(0.30, 0.34, 0.42);   // highlighted selected segment
+  const tabInactive = rgb(0, 0, 0, 0);         // transparent (unselected)
+
+  // Tabs host footprint within the canvas (CSS px).
+  const hostL = 24, hostT = 72, hostR = W - 24, hostB = H - 24;
+
+  // A box measured in px from the page's TOP-LEFT corner (Y downward).
+  const pl = (left: number, top: number, w: number, h: number): UixComponent =>
+    c("RectTransform", {
+      anchorMin: { x: 0, y: 1 }, anchorMax: { x: 0, y: 1 },
+      offsetMin: { x: left, y: -(top + h) }, offsetMax: { x: left + w, y: -top },
+      pivot: { x: 0.5, y: 0.5 },
+    });
+
+  // ── Header ──────────────────────────────────────────────────────────────────
+  const title = slot("Title", [
+    rectRT(W, H, 0, 22, W, 54),
+    c("Text", { content: "Frequency Link", size: 22, color: WHITE, horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false }),
+  ]);
+  const closeBtn = makeCloseBtn(rectRT(W, H, W - 56, 20, W - 20, 56));
+
+  // ── Tab bar (Frequencies / Settings / Credits) — segmented pills ──────────────
+  function tabButton(idx: number, label: string): Slot {
+    const tint = idx === 0 ? tabActive : tabInactive;
+    return slot(`Tab ${idx + 1}`, [
+      fillRT(),
+      c("Image", { tint, preserveAspect: false, spriteUrl: "", cornerRadius: 100, placeholderRemoved: true }),
+      c("Button", { normalColor: tint, highlightColor: rgb(0.24, 0.27, 0.34), pressColor: rgb(0.18, 0.20, 0.26), disabledColor: rgb(0.3, 0.3, 0.3), hoverVibrate: false }),
+      c("TabButton", {}),
+      c("LayoutElement", { minWidth: -1, minHeight: -1, preferredWidth: -1, preferredHeight: -1, flexibleWidth: 1, flexibleHeight: 1, orderOffset: idx }),
+    ], [
+      slot("Label", [
+        fillRT(),
+        c("Text", { content: label, size: 15, color: WHITE, horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false }),
+      ]),
+    ]);
+  }
+  const tabBar = slot("Tab Bar", [
+    c("RectTransform", { anchorMin: { x: 0, y: 1 }, anchorMax: { x: 1, y: 1 }, offsetMin: { x: 0, y: -TAB_BAR }, offsetMax: { x: 0, y: 0 }, pivot: { x: 0.5, y: 0.5 } }),
+    c("HorizontalLayout", { spacing: 8, paddingLeft: 8, paddingRight: 8, paddingTop: 6, paddingBottom: 6, horizontalAlign: "Center", verticalAlign: "Middle", forceExpandWidth: true, forceExpandHeight: true }),
+  ], [tabButton(0, "Frequencies"), tabButton(1, "Settings"), tabButton(2, "Credits")]);
+
+  // Pages: no background, no folder overlap — they start cleanly below the bar so
+  // the content reads as seamless with the selector above.
+  function tabPage(idx: number, children: Slot[]): Slot {
+    return slot(`Page ${idx + 1}`, [
+      c("RectTransform", { anchorMin: { x: 0, y: 0 }, anchorMax: { x: 1, y: 1 }, offsetMin: { x: 0, y: 0 }, offsetMax: { x: 0, y: -(TAB_BAR + TAB_GAP) }, pivot: { x: 0.5, y: 0.5 } }),
+      c("TabPage", {}),
+    ], children);
+  }
+
+  // A User Profile card (avatar placeholder + name) — used in Credits + the
+  // Settings user row. Mirrors the buildUserProfile widget; positioned via pl.
+  function userCard(name: string, x: number, y: number, w: number, h: number): Slot {
+    const avatar = slot("Avatar", [
+      c("RectTransform", { anchorMin: { x: 0, y: 0.5 }, anchorMax: { x: 0, y: 0.5 }, offsetMin: { x: 14, y: -24 }, offsetMax: { x: 62, y: 24 }, pivot: { x: 0.5, y: 0.5 } }),
+      // Plain neutral circle; exporter swaps Sprite for the live profile picture.
+      c("Image", { tint: rgb(0.3, 0.33, 0.38), preserveAspect: true, spriteUrl: "", cornerRadius: 100, placeholderRemoved: true }),
+    ]);
+    const nm = slot("Name", [
+      c("RectTransform", { anchorMin: { x: 0, y: 0 }, anchorMax: { x: 1, y: 1 }, offsetMin: { x: 76, y: 0 }, offsetMax: { x: -14, y: 0 }, pivot: { x: 0.5, y: 0.5 } }),
+      c("Text", { content: name, size: 18, color: WHITE, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+    ]);
+    return slot("User Profile", [
+      pl(x, y, w, h),
+      c("Image", { tint: rgb(0.13, 0.15, 0.18), preserveAspect: false, spriteUrl: "", cornerRadius: 14, placeholderRemoved: true }),
+      c("UserProfile", { avatarPosition: "left" }),
+    ], [avatar, nm]);
+  }
+
+  // "Take ownership" button — assigns the pressing user to the linked User Profile
+  // card (avatar + name) via the exporter's ButtonDynamicImpulseTrigger wiring.
+  // `linkId` must be the User Profile slot's id (link-by-id, like audioLinkId).
+  function takeOwnershipButton(linkId: string, x: number, y: number, w: number, h: number): Slot {
+    const label = slot("Label", [
+      c("RectTransform", { anchorMin: { x: 0, y: 0 }, anchorMax: { x: 1, y: 1 }, offsetMin: { x: 0, y: 0 }, offsetMax: { x: 0, y: 0 }, pivot: { x: 0.5, y: 0.5 } }),
+      c("Text", { content: "Take ownership", size: 15, color: WHITE, horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false }),
+    ]);
+    return slot("Take Ownership", [
+      pl(x, y, w, h),
+      c("Image", { tint: rgb(0.26, 0.55, 0.96), preserveAspect: false, spriteUrl: "", cornerRadius: 12 }),
+      c("Button", {
+        normalColor: rgb(0.26, 0.55, 0.96), highlightColor: rgb(0.34, 0.62, 0.99),
+        pressColor: rgb(0.20, 0.46, 0.86), disabledColor: rgb(0.4, 0.42, 0.46),
+        takeOwnershipLinkId: linkId,
+      }),
+    ], [label]);
+  }
+
+  // A settings toggle row: label on the left, pill+knob on the right.
+  function settingsToggle(label: string, x: number, y: number, w: number, initial: boolean): Slot {
+    const knob = slot("Knob", [
+      c("RectTransform", { anchorMin: { x: 0.5, y: 0.5 }, anchorMax: { x: 0.5, y: 0.5 }, offsetMin: { x: initial ? 1 : -27, y: -13 }, offsetMax: { x: initial ? 27 : -1, y: 13 }, pivot: { x: 0.5, y: 0.5 } }),
+      c("Image", { tint: rgb(0.95, 0.95, 0.95), preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+      c("Knob", { offOffsetMin: { x: -27, y: -13 }, offOffsetMax: { x: -1, y: 13 }, onOffsetMin: { x: 1, y: -13 }, onOffsetMax: { x: 27, y: 13 } }),
+    ]);
+    const pill = slot("Pill", [
+      c("RectTransform", { anchorMin: { x: 1, y: 0.5 }, anchorMax: { x: 1, y: 0.5 }, offsetMin: { x: -60, y: -16 }, offsetMax: { x: 0, y: 16 }, pivot: { x: 0.5, y: 0.5 } }),
+      c("Image", { tint: initial ? rgb(0.30, 0.69, 0.42) : rgb(0.141, 0.141, 0.141), preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+      c("Button", { normalColor: WHITE, highlightColor: WHITE, pressColor: rgb(0.8, 0.8, 0.8), disabledColor: rgb(0.5, 0.5, 0.5), hoverVibrate: false }),
+      c("Toggle", { initialState: initial, offColor: rgb(0.141, 0.141, 0.141), onColor: rgb(0.30, 0.69, 0.42) }),
+    ], [knob]);
+    const lab = slot("Label", [
+      c("RectTransform", { anchorMin: { x: 0, y: 0 }, anchorMax: { x: 1, y: 1 }, offsetMin: { x: 0, y: 0 }, offsetMax: { x: -72, y: 0 }, pivot: { x: 0.5, y: 0.5 } }),
+      c("Text", { content: label, size: 16, color: WHITE, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+    ]);
+    return slot("Toggle", [pl(x, y, w, 36)], [pill, lab]);
+  }
+
+  // ── Frequencies page content ──────────────────────────────────────────────────
+  // 8 vertical-bar composites: a "Progress Bar" wrapper with a top number Label
+  // and a fill-anchored "Track" carrying the vertical ProgressBar marker. The
+  // colorLinkId pairs each bar with the matching color picker below.
+  const BAR_W = 100, BAR_GAP = 40, BAR_LEFT = 20, BAR_TOP = 16, BAR_H = 360;
+  function vBar(i: number): Slot {
+    const x = BAR_LEFT + i * (BAR_W + BAR_GAP);
+    const numberLabel = slot("Label", [
+      c("RectTransform", { anchorMin: { x: 0, y: 1 }, anchorMax: { x: 1, y: 1 }, offsetMin: { x: 0, y: -20 }, offsetMax: { x: 0, y: 0 }, pivot: { x: 0.5, y: 0.5 } }),
+      c("Text", { content: String(i), size: 16, color: WHITE, horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false }),
+    ]);
+    const track = slot("Track", [
+      c("RectTransform", { anchorMin: { x: 0, y: 0 }, anchorMax: { x: 1, y: 1 }, offsetMin: { x: 0, y: 0 }, offsetMax: { x: 0, y: -26 }, pivot: { x: 0.5, y: 0.5 } }),
+      c("Image", { tint: TRACK_BG, preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+      c("ProgressBar", { value: DEMO[i], min: 0, max: 1, direction: "Vertical", fillColor: CHANNEL[i], colorLinkId: `freq-${i}` }),
+    ]);
+    return slot("Progress Bar", [pl(x, BAR_TOP, BAR_W, BAR_H)], [track, numberLabel]);
+  }
+  const bars = CHANNEL.map((_, i) => vBar(i));
+
+  // 8 color pickers (rounded pill swatches), each linked to its bar.
+  const colorsLabel = slot("Colors Label", [
+    pl(BAR_LEFT, BAR_TOP + BAR_H + 12, 200, 22),
+    c("Text", { content: "Colors", size: 16, color: MUTED, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+  ]);
+  const PICK_TOP = BAR_TOP + BAR_H + 36;
+  function vPicker(i: number): Slot {
+    const x = BAR_LEFT + i * (BAR_W + BAR_GAP);
+    return slot("Color Picker", [
+      pl(x, PICK_TOP, BAR_W, 30),
+      c("Image", { tint: CHANNEL[i], preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+      c("Button", { normalColor: CHANNEL[i], highlightColor: CHANNEL[i], pressColor: CHANNEL[i], disabledColor: CHANNEL[i], hoverVibrate: false }),
+      c("ColorPicker", { initialColor: CHANNEL[i], alpha: true, hdr: false, linkId: `freq-${i}` }),
+    ]);
+  }
+  const pickers = CHANNEL.map((_, i) => vPicker(i));
+
+  // Output: a dark panel with a live audio Waveform on top. The Waveform's
+  // audio source is driven by the "Audio source" reference in the Settings tab
+  // (both carry audioLinkId "audio" → ReferenceCopy in the export's links pass).
+  const outLabel = slot("Output Label", [
+    pl(BAR_LEFT, PICK_TOP + 50, 200, 22),
+    c("Text", { content: "Output", size: 16, color: MUTED, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+  ]);
+  const waveform = slot("Waveform", [
+    c("RectTransform", { anchorMin: { x: 0, y: 0 }, anchorMax: { x: 1, y: 1 }, offsetMin: { x: 10, y: 10 }, offsetMax: { x: -10, y: -10 }, pivot: { x: 0.5, y: 0.5 } }),
+    c("Waveform", { color: rgb(0.36, 0.84, 0.94), points: 256, thickness: 4, historyLength: 0.5, audioLinkId: "audio" }),
+  ]);
+  const outputBox = slot("Output", [
+    pl(BAR_LEFT, PICK_TOP + 76, BAR_LEFT + 8 * BAR_W + 7 * BAR_GAP - BAR_LEFT, 96),
+    c("Image", { tint: rgb(0.085, 0.095, 0.11), preserveAspect: false, spriteUrl: "", cornerRadius: 12, placeholderRemoved: true }),
+  ], [waveform]);
+
+  // Volume slider + float input (two-way linked via the "volume" id).
+  const VOL_TOP = PICK_TOP + 76 + 96 + 18;
+  const volLabel = slot("Volume Label", [
+    pl(BAR_LEFT, VOL_TOP, 200, 24),
+    c("Text", { content: "Volume", size: 16, color: WHITE, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+  ]);
+  const volSlider = slot("Volume Slider", [
+    pl(BAR_LEFT, VOL_TOP + 32, 960, 18),
+    c("Image", { tint: TRACK_BG, preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+    c("Slider", { value: 0.09, min: 0, max: 1, direction: "Horizontal", integers: false, power: 1, fillColor: rgb(0.92, 0.92, 0.92), clamp: true, requireInitialPress: true, linkId: "volume" }),
+  ]);
+  const volValue = slot("Volume Value", [
+    pl(BAR_LEFT + 980, VOL_TOP + 24, 100, 34),
+    c("Image", { tint: INPUT_BG, preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+    c("TextField", {
+      placeholder: "", textContent: "0.09", fontSize: 16,
+      textColor: WHITE, placeholderColor: rgb(0.45, 0.45, 0.45), backgroundTint: INPUT_BG,
+      fieldType: "float", textAlign: "Center", bindSliderId: "volume",
+    }),
+  ]);
+
+  const page1 = tabPage(0, [
+    ...bars, colorsLabel, ...pickers, outLabel, outputBox, volLabel, volSlider, volValue,
+  ]);
+
+  // ── Settings page: User card + 6 toggles + Audio source ───────────────────────
+  const userLabel = slot("User Label", [
+    pl(20, 14, 300, 22),
+    c("Text", { content: "User", size: 16, color: MUTED, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+  ]);
+  const userRow = userCard("Username", 20, 40, 880, 72);
+  // "Take ownership" button on the right of the user row — assigns the pressing
+  // user to the card above (avatar + name). Linked by the card's slot id.
+  const takeOwnerBtn = takeOwnershipButton(userRow.id, 916, 40, 196, 72);
+  const COL2 = 582, TW = 510, R0 = 130, RH = 48;
+  const toggles = [
+    settingsToggle("Enable FrequencyLink",   20,   R0,          TW, true),
+    settingsToggle("Use FQ Color Logic",     20,   R0 + RH,     TW, true),
+    settingsToggle("Extended Compatibility", 20,   R0 + 2 * RH, TW, true),
+    settingsToggle("Grabbable",              COL2, R0,          TW, true),
+    settingsToggle("Lock",                   COL2, R0 + RH,     TW, false),
+    settingsToggle("Minimal Mode",           COL2, R0 + 2 * RH, TW, false),
+  ];
+  // Audio source (occupies where the reference's Theme Selector sat) — feeds the
+  // Output waveform via the shared audioLinkId "audio".
+  const audioSrcField = slot("Field", [
+    c("RectTransform", { anchorMin: { x: 1, y: 0.5 }, anchorMax: { x: 1, y: 0.5 }, offsetMin: { x: -420, y: -18 }, offsetMax: { x: 0, y: 18 }, pivot: { x: 0.5, y: 0.5 } }),
+    c("ReferenceField", { fieldColor: INPUT_BG, buttonColor: INPUT_BG, textColor: WHITE, audioLinkId: "audio" }),
+  ]);
+  const audioSrcLabel = slot("Label", [
+    c("RectTransform", { anchorMin: { x: 0, y: 0 }, anchorMax: { x: 1, y: 1 }, offsetMin: { x: 0, y: 0 }, offsetMax: { x: -432, y: 0 }, pivot: { x: 0.5, y: 0.5 } }),
+    c("Text", { content: "Audio source", size: 16, color: WHITE, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+  ]);
+  const audioSourceRow = slot("Reference Field", [pl(20, R0 + 3 * RH + 10, 1092, 36)], [audioSrcField, audioSrcLabel]);
+  const settingsHint = slot("Settings Hint", [
+    pl(20, R0 + 3 * RH + 54, 1092, 22),
+    c("Text", { content: "Drop an audio source above to drive the Output waveform.", size: 13, color: MUTED, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+  ]);
+  const page2 = tabPage(1, [userLabel, userRow, takeOwnerBtn, ...toggles, audioSourceRow, settingsHint]);
+
+  // ── Credits page: two user-profile placeholders ───────────────────────────────
+  const creditsLabel = slot("Credits Label", [
+    pl(20, 14, 300, 22),
+    c("Text", { content: "Credits", size: 16, color: MUTED, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+  ]);
+  const page3 = tabPage(2, [
+    creditsLabel,
+    userCard("User 1", 20, 48, 530, 96),
+    userCard("User 2", 582, 48, 530, 96),
+  ]);
+
+  // Frameless, seamless host — the segmented selector sits directly over the
+  // panel background; no frame card, no page panels.
+  const tabsHost = slot("Tabs", [
+    rectRT(W, H, hostL, hostT, hostR, hostB),
+    c("Tabs", {
+      orientation: "Horizontal", tabPosition: "top", activeTab: 0, tabStyle: "segmented",
+      tabBarSize: TAB_BAR, tabSpacing: 8, pagePadding: 0,
+      activeColor: tabActive, inactiveColor: tabInactive,
+      pageColor: rgb(0, 0, 0, 0), frameColor: rgb(0, 0, 0, 0), labelColor: WHITE,
+    }),
+  ], [tabBar, page1, page2, page3]);
+
+  // Opaque panel backing (Front Backing / Background / Back Cover). Without this
+  // the canvas is transparent on import — only Image elements are painted.
+  const background = buildBackgroundTrio(PANEL_BG);
+
+  return slot(
+    "Canvas",
+    [
+      c("Canvas", {
+        sizeX: W, sizeY: H, pixelScale: 0.0005,
+        acceptPhysicalTouch: true,
+        backgroundColor: PANEL_BG, rounded: true,
+      }),
+      fillRT(),
+    ],
+    [background, title, closeBtn, tabsHost],
+  );
+}
+
 export const BUILTIN_PRESETS: readonly PresetDescriptor[] = [
   {
     id: "experimental",
@@ -2664,6 +2964,14 @@ export const BUILTIN_PRESETS: readonly PresetDescriptor[] = [
       "Full sample panel — every interactive control on one canvas: header (icon + title + spinner + close), checkbox, toggle, slider, three text fields, radio group, progress bar, dropdown, color picker, reference receiver field, scroll area, and two action buttons. The default starting point and first target for new features.",
     category: "panel",
     build: createStarterTemplate,
+  },
+  {
+    id: "frequency-link",
+    name: "Frequency Link",
+    description:
+      "Wide audio-visualizer dashboard: a tab strip over 8 tall vertical progress bars (one per frequency channel), 8 color pickers that live-drive each bar's color, a live audio waveform in the Output area, a volume slider with a two-way float input, and an 'Audio source' reference in Settings that feeds the waveform. Shows off vertical bars, the waveform mesh, and cross-element color/value/reference links.",
+    category: "tool",
+    build: buildFrequencyLinkPanel,
   },
   {
     id: "simple-dialog",

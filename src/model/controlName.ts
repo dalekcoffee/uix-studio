@@ -31,6 +31,23 @@ export const STRETCHY_CONTROL_TYPES = new Set<string>([
   "Dropdown", "Reference Field",
 ]);
 
+// True when this composite is a vertical Progress Bar — its control child (the
+// Track) carries a ProgressBar component with direction "Vertical". Such bars
+// use the narrow top-label + fill-Track layout (compositeLayout.verticalBarLayout,
+// VERTICAL_BAR_WIDTH wrapper), NOT the horizontal "left"/"top" composite rows.
+// Shared by the store's reanchor/reflow logic AND contentMin's no-clip gate so
+// the two can never drift — if the gate disagreed with the layout, snap reflow
+// would re-widen a 64px vertical bar back to the 100px horizontal minimum.
+export function isVerticalProgressBar(slot: Slot): boolean {
+  for (const child of slot.children) {
+    const pb = child.components.find((c) => c.type === "ProgressBar");
+    if (pb) {
+      return ((pb.props as { direction?: string }).direction ?? "Horizontal") === "Vertical";
+    }
+  }
+  return false;
+}
+
 // The visible label of a composite control = the trimmed `content` of the Text
 // in its direct "Label" child; "" if none.
 export function controlLabelText(slot: Slot): string {

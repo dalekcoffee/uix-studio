@@ -31,12 +31,13 @@ import {
   LABELLED_CONTROL_TYPES,
   STRETCHY_CONTROL_TYPES,
   controlLabelText,
+  isVerticalProgressBar,
   labelPositionOf,
   type LabelPosition,
 } from "../model/controlName";
 import { measureLabelWidth } from "../editor/textMeasure";
 import { contentMinWidth, compositeResizeMinWidth, compositeRefitInfo, SNAP_GAP } from "../editor/render/contentMin";
-import { computeCompositeLayout, DEFAULT_CONTROL_WIDTH, type RTRect } from "../editor/render/compositeLayout";
+import { computeCompositeLayout, verticalBarLayout, VERTICAL_BAR_WIDTH, VERTICAL_BAR_HEIGHT, DEFAULT_CONTROL_WIDTH, type RTRect } from "../editor/render/compositeLayout";
 import { getLayoutKind } from "../editor/render/layoutEngine";
 import { INTERACTIVITY_COMPONENTS, isSlotClickable } from "../model/clickable";
 import { createStarterTemplate } from "../model/template";
@@ -47,7 +48,7 @@ import { applyButtonPreset, type ButtonPresetId } from "../model/buttonPresets";
 import { findPreset } from "../model/presets";
 import { findBackgroundSlots, buildBackgroundTrio } from "../model/background";
 import { SYSTEM_ICON_FLAGS } from "../model/systemIcons";
-import { buildWidget, buildPopupContent, buildColumn, isWidgetType } from "../model/widgets";
+import { buildWidget, buildPopupContent, buildColumn, isWidgetType, userProfileLayout } from "../model/widgets";
 import {
   applyActiveTab,
   retintTabs,
@@ -502,6 +503,15 @@ interface Actions {
   // Re-lays the internals, resizes the wrapper height (top grows it downward),
   // and reflows the container so siblings shift. Undoable.
   setLabelPosition: (slotId: string, pos: LabelPosition) => void;
+  // Toggle a Progress Bar composite between Horizontal and Vertical. Sets the
+  // direction on the bar's Track marker and reshapes the wrapper: Vertical → a
+  // tall narrow column (top label + fill Track), Horizontal → the classic short
+  // wide row. Undoable; reflows the container in snap mode.
+  setProgressBarDirection: (slotId: string, dir: "Horizontal" | "Vertical") => void;
+  // Move a User Profile card's avatar relative to its name (left/above/right).
+  // Re-lays the Avatar + Name children; grows the card if the new arrangement
+  // doesn't fit (never shrinks an authored size). Undoable; snap mode reflows.
+  setUserProfileLayout: (slotId: string, pos: "left" | "above" | "right") => void;
   // Resize a LAYOUT-managed element (a scroll-area / layout row, whose position
   // is owned by the layout so RT offsets are ignored) by writing its
   // LayoutElement preferred size. Live (no history) — folded into dragCommit.
@@ -824,6 +834,20 @@ export const useStore = create<State & Actions>((set, get) => {
     return r;
   }
 
+  // The control child of a Progress Bar composite that carries the ProgressBar
+  // marker (the "Track"), or undefined.
+  function progressBarControl(wrapper: Slot): Slot | undefined {
+    return wrapper.children.find((c) => c.components.some((k) => k.type === "ProgressBar"));
+  }
+  // True when this composite is a vertical Progress Bar (its Track marker's
+  // direction is "Vertical"). Such bars use a top-label + fill-Track layout that
+  // auto-scales with the wrapper, so reflow/resize re-apply verticalBarLayout
+  // instead of the horizontal "left"/"top" branches. Thin alias over the shared
+  // predicate so the reanchor path and contentMin's no-clip gate never drift.
+  function isVerticalBar(wrapper: Slot): boolean {
+    return isVerticalProgressBar(wrapper);
+  }
+
   function reanchorLabeledComposite(root: Slot, slotId: string, packed: boolean): Slot {
     const slot = findSlot(root, slotId);
     if (!slot || !LABELLED_CONTROL_TYPES.has(slot.name)) return root;
@@ -833,6 +857,14 @@ export const useStore = create<State & Actions>((set, get) => {
       (c) => c !== label && c.components.some((k) => k.type === "RectTransform"),
     );
     if (controls.length !== 1) return root; // skip multi-part composites
+    // Vertical bar: fill-Track layout (auto-scales with the wrapper) — re-apply it
+    // so a reflow never collapses the bar back to a horizontal row.
+    if (isVerticalBar(slot)) {
+      const vl = verticalBarLayout(VERTICAL_BAR_HEIGHT);
+      let r = applyRT(root, label.id, vl.label);
+      r = applyRT(r, controls[0].id, vl.control);
+      return r;
+    }
     const crt = getRectTransform(controls[0]);
     const controlW = Math.abs((crt.offsetMax?.x ?? 0) - (crt.offsetMin?.x ?? 0));
     const controlH = Math.abs((crt.offsetMax?.y ?? 0) - (crt.offsetMin?.y ?? 0));
@@ -1973,6 +2005,18 @@ export const useStore = create<State & Actions>((set, get) => {
         (c) => c !== labelSlot && c.components.some((k) => k.type === "RectTransform"),
       );
       if (!control) return;
+      // Vertical bar: the Track fills the wrapper below the top label via its
+      // anchors, so any resize (incl. taller) needs no offset change — just
+      // re-apply the fill layout so nothing drifts.
+      if (isVerticalBar(wrapper)) {
+        const vl = verticalBarLayout(VERTICAL_BAR_HEIGHT);
+        let vNext = applyRT(r, control.id, vl.control);
+        if (labelSlot) vNext = applyRT(vNext, labelSlot.id, vl.label);
+        const vPatch: Partial<State> = { root: vNext };
+        if (get().editMode === "free") vPatch.freeEditsDirty = true;
+        set(vPatch);
+        return;
+      }
       // Top-labelled: the control is stacked under the label (stretchy ones track
       // the wrapper width via their anchors), so a width resize needs no per-control
       // offset change — just re-apply the deterministic stacked layout.
@@ -2072,6 +2116,140 @@ export const useStore = create<State & Actions>((set, get) => {
       // Snap mode: reflow so siblings shift for the new height. Root-level uses
       // the pure snapReflowRoot (folded into the same commit); a nested container
       // reflows live after the commit (mirrors the add flow).
+      const snapMode = get().editMode === "snap";
+      const parentIsRoot = !parent || parent.id === base.id;
+      if (snapMode && parentIsRoot) {
+        commit(snapReflowRoot(next));
+      } else {
+        commit(next);
+        if (snapMode && parent) get().reflowContainerNow(parent.id);
+      }
+    },
+
+    setProgressBarDirection: (slotId, dir) => {
+      const base = get().root;
+      const wrapper = findSlot(base, slotId);
+      if (!wrapper || !LABELLED_CONTROL_TYPES.has(wrapper.name)) return;
+      const control = progressBarControl(wrapper);
+      if (!control) return;
+      const cur = isVerticalBar(wrapper) ? "Vertical" : "Horizontal";
+      if (cur === dir) return;
+      const label = wrapper.children.find((c) => c.name === "Label");
+
+      // 1. Set the direction on the bar's Track marker.
+      let next = updateComponentProp(base, control.id, "ProgressBar", "direction", dir);
+
+      // 2. Reshape the internals (label + Track) and pick the new wrapper size.
+      let layout: ReturnType<typeof verticalBarLayout>;
+      let newWrapperW: number;
+      if (dir === "Vertical") {
+        // Vertical bars read with the number above; force the label to the top
+        // and let the Track fill the column below it.
+        next = setLabelPositionField(next, slotId, "top");
+        layout = verticalBarLayout(VERTICAL_BAR_HEIGHT);
+        newWrapperW = VERTICAL_BAR_WIDTH;
+      } else {
+        // Back to the classic short wide row with a left label.
+        next = setLabelPositionField(next, slotId, "left");
+        const fontPx = (label?.components.find((k) => k.type === "Text")?.props as { size?: number } | undefined)?.size ?? 14;
+        const labelW = measureLabelWidth(controlLabelText(wrapper), fontPx);
+        const controlW = DEFAULT_CONTROL_WIDTH[wrapper.name] || 200;
+        layout = computeCompositeLayout("left", { stretchy: false, controlW, controlH: 12, labelW });
+        newWrapperW = labelW + SNAP_GAP + controlW;
+      }
+      if (label) next = applyRT(next, label.id, layout.label);
+      next = applyRT(next, control.id, layout.control);
+
+      // 3. Resize the wrapper. Layout-managed (inside a scroll/layout) only owns
+      // its height via LayoutElement; absolute placement resizes the RT, pinning
+      // the top-left so it grows down/right predictably.
+      const parent = findParent(base, slotId);
+      if (isLayoutManaged(base, slotId)) {
+        const live = findSlot(next, slotId);
+        if (live && !live.components.some((c) => c.type === "LayoutElement")) {
+          next = addComponent(next, slotId, "LayoutElement");
+          const idx = parent ? parent.children.filter((c) => !isStructuralSlot(c)).findIndex((c) => c.id === slotId) : 0;
+          next = updateComponentProp(next, slotId, "LayoutElement", "orderOffset", Math.max(0, idx));
+        }
+        next = updateComponentProp(next, slotId, "LayoutElement", "preferredHeight", layout.wrapperH);
+        next = updateComponentProp(next, slotId, "LayoutElement", "minHeight", layout.wrapperH);
+      } else {
+        const canvasSize = canvasSizeOf(base);
+        const wrapRect = computeAbsoluteRect(base, slotId, canvasSize);
+        const parentRect =
+          (parent ? computeAbsoluteRect(base, parent.id, canvasSize) : null) ??
+          { x: 0, y: 0, w: canvasSize.w, h: canvasSize.h };
+        if (wrapRect) {
+          const wrt = getRectTransform(wrapper);
+          const newRect = { x: wrapRect.x, y: wrapRect.y, w: newWrapperW, h: layout.wrapperH };
+          const { offsetMin, offsetMax } = rectToOffsets(newRect, parentRect, wrt.anchorMin, wrt.anchorMax);
+          next = updateComponentProp(next, slotId, "RectTransform", "offsetMin", offsetMin);
+          next = updateComponentProp(next, slotId, "RectTransform", "offsetMax", offsetMax);
+        }
+      }
+
+      // 4. Reflow siblings in snap mode (same path as setLabelPosition).
+      const snapMode = get().editMode === "snap";
+      const parentIsRoot = !parent || parent.id === base.id;
+      if (snapMode && parentIsRoot) {
+        commit(snapReflowRoot(next));
+      } else {
+        commit(next);
+        if (snapMode && parent) get().reflowContainerNow(parent.id);
+      }
+    },
+
+    setUserProfileLayout: (slotId, pos) => {
+      const base = get().root;
+      const wrapper = findSlot(base, slotId);
+      if (!wrapper || !wrapper.components.some((c) => c.type === "UserProfile")) return;
+      const avatar = wrapper.children.find((c) => c.name === "Avatar");
+      const name = wrapper.children.find((c) => c.name === "Name");
+      if (!avatar || !name) return;
+      const lay = userProfileLayout(pos);
+      let next = updateComponentProp(base, slotId, "UserProfile", "avatarPosition", pos);
+      next = applyRT(next, avatar.id, lay.avatar as unknown as RTRect);
+      next = applyRT(next, name.id, lay.name as unknown as RTRect);
+      next = updateComponentProp(next, name.id, "Text", "horizontalAlign", lay.nameAlign);
+
+      // GROW the card if the new arrangement doesn't fit — never shrink an
+      // authored size (member cards are often much wider than the widget
+      // default; clobbering them to a fixed size loses real work). "Above"
+      // stacks avatar over name, so it needs the most height; side positions
+      // need height for the centered avatar + width for avatar + gap + name.
+      const minW = pos === "above" ? 100 : 160;
+      const minH = pos === "above" ? 120 : 72;
+      const canvasSize = canvasSizeOf(base);
+      const curRect = computeAbsoluteRect(base, slotId, canvasSize);
+      const newH = Math.max(curRect?.h ?? minH, minH);
+      const parent = findParent(base, slotId);
+      if (isLayoutManaged(base, slotId)) {
+        // Layout owns position + width; the card only owns its height via
+        // LayoutElement (same dance as setProgressBarDirection) — without this
+        // an "above" card inside a scroll list keeps its short row height and
+        // the stacked avatar/name clip.
+        const live = findSlot(next, slotId);
+        if (live && !live.components.some((c) => c.type === "LayoutElement")) {
+          next = addComponent(next, slotId, "LayoutElement");
+          const idx = parent ? parent.children.filter((c) => !isStructuralSlot(c)).findIndex((c) => c.id === slotId) : 0;
+          next = updateComponentProp(next, slotId, "LayoutElement", "orderOffset", Math.max(0, idx));
+        }
+        next = updateComponentProp(next, slotId, "LayoutElement", "preferredHeight", newH);
+        next = updateComponentProp(next, slotId, "LayoutElement", "minHeight", newH);
+      } else if (curRect) {
+        // Absolute placement: resize the RT, pinning the top-left.
+        const parentRect =
+          (parent ? computeAbsoluteRect(base, parent.id, canvasSize) : null) ??
+          { x: 0, y: 0, w: canvasSize.w, h: canvasSize.h };
+        const wrt = getRectTransform(wrapper);
+        const newRect = { x: curRect.x, y: curRect.y, w: Math.max(curRect.w, minW), h: newH };
+        const { offsetMin, offsetMax } = rectToOffsets(newRect, parentRect, wrt.anchorMin, wrt.anchorMax);
+        next = updateComponentProp(next, slotId, "RectTransform", "offsetMin", offsetMin);
+        next = updateComponentProp(next, slotId, "RectTransform", "offsetMax", offsetMax);
+      }
+
+      // Reflow siblings in snap mode (same path as setProgressBarDirection) so
+      // a grown card never overlaps its row — snap mode is overlap-free.
       const snapMode = get().editMode === "snap";
       const parentIsRoot = !parent || parent.id === base.id;
       if (snapMode && parentIsRoot) {

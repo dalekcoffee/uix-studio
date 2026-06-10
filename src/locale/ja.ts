@@ -318,6 +318,13 @@ export const ja: Dictionary = {
     labelTop: "▤ 上",
     labelLeftHint: "コントロールの左にラベル",
     labelTopHint: "コントロールの上にラベル",
+    direction: "方向",
+    directionHorizontal: "↔ 横",
+    directionVertical: "↕ 縦",
+    avatarPosition: "アバターの位置",
+    avatarLeft: "◧ 左",
+    avatarAbove: "▲ 上",
+    avatarRight: "右 ◨",
     managedByLayout: "レイアウトが管理",
   },
 

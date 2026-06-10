@@ -3,6 +3,7 @@ import {
   LABELLED_CONTROL_TYPES,
   STRETCHY_CONTROL_TYPES,
   controlLabelText,
+  isVerticalProgressBar,
   labelPositionOf,
   type LabelPosition,
 } from "../../model/controlName";
@@ -10,7 +11,7 @@ import { getLayoutKind } from "./layoutEngine";
 import { isStructuralSlot } from "../../model/structural";
 import { DEFAULT_CONTENT_PADDING, SCROLLBAR_GUTTER, resolvePad } from "../../model/padding";
 import { measureLabelWidth } from "../textMeasure";
-import { compositeMinWidth } from "./compositeLayout";
+import { compositeMinWidth, VERTICAL_BAR_WIDTH } from "./compositeLayout";
 
 // Content-based MINIMUM usable width (canvas px) for snap side-by-side layout.
 // Unlike a fraction of the (often dead-space-heavy) authored width, this is the
@@ -173,6 +174,13 @@ export function compositeResizeMinWidth(slot: Slot): number | null {
   // floor must keep their NATURAL width plus the label band.
   const fixedLayout = slot.components.some((c) => c.type === "RadioGroup") || controls.length !== 1;
   if (!fixedLayout) {
+    // Vertical Progress Bar: the Track is fill-anchored, so rtWidth reads 0 and
+    // the fallback would floor the resize at the 100px HORIZONTAL bar minimum —
+    // i.e. the user couldn't keep the bar at its designed 64px column width.
+    // Must mirror contentMinWidth's vertical-bar branch.
+    if (slot.name === "Progress Bar" && isVerticalProgressBar(slot)) {
+      return Math.max(VERTICAL_BAR_WIDTH, labelW);
+    }
     const controlW = rtWidth(controls[0]) || controlMinFor(slot.name);
     const cmin = Math.min(controlMinFor(slot.name), controlW);
     return compositeMinWidth(labelPositionOf(slot), {
@@ -329,6 +337,16 @@ export function contentMinWidth(slot: Slot, widthOf: (s: Slot) => number): numbe
       // ↗/value/× buttons) clips. Top-labelled composites stack instead, so the
       // floor is the wider of the two pieces.
       const cw = rtWidth(controls[0]) || controlMinFor(slot.name);
+      // Vertical Progress Bar: a narrow top-label + fill-Track column (wrapper
+      // = VERTICAL_BAR_WIDTH, see store.setProgressBarDirection). It must NOT
+      // fall into the horizontal "top" composite math below — that returns the
+      // 100px horizontal Progress Bar minimum, which makes the feasibility gate
+      // reject side-by-side merges that fit AND makes layoutRowMembers' shrink
+      // pass WIDEN the 64px bar (negative over-minimum slack). The no-clip
+      // floor is the wider of the column width and the full-width label band.
+      if (slot.name === "Progress Bar" && isVerticalProgressBar(slot)) {
+        return clamp(Math.max(VERTICAL_BAR_WIDTH, labelW));
+      }
       const position = labelPositionOf(slot);
       if (position === "top") {
         return clamp(compositeMinWidth("top", {

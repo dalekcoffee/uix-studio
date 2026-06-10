@@ -57,6 +57,18 @@ export const UIX_COMPONENT_TYPES = [
   // Editor-only layout aid: an empty, invisible row that reserves vertical
   // space. Exports as a plain empty slot (the marker itself is skipped).
   "Spacer",
+  // Audio waveform visualizer. At export the host slot becomes a
+  // UIX.RectMesh<AudioSourceWaveformMesh> (a procedural mesh that draws the live
+  // waveform of an audio source) plus a ReferenceCast that feeds the mesh's
+  // Source from a dropped "Audio source" reference (wired by `audioLinkId` ↔ a
+  // ReferenceField's matching id, via a ReferenceCopy in the "🔗 Links" pass).
+  // Modeled on Resonite's AudioStreamController (UIX Template/AudioStreamController).
+  "Waveform",
+  // User profile card: an avatar (circular image placeholder) + a name label,
+  // grouped on a rounded card. Editor-only marker (skipped at export — the Card
+  // Image + Avatar Image + Name Text export as ordinary slots). `avatarPosition`
+  // (left/above/right) re-lays the two children. Handy for member lists / credits.
+  "UserProfile",
 ] as const;
 
 export type UixComponentType = (typeof UIX_COMPONENT_TYPES)[number];

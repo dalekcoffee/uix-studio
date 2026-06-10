@@ -164,6 +164,69 @@ function buildProgressBar(cascade: number): Slot {
   return wrap("Progress Bar", 340, 36, cascade, [track, leftLabel("Progress", 212)]);
 }
 
+// Audio waveform visualizer (no label child — a pure visual, like the Spinner).
+// Defaults to a wide cyan trace; the exporter lowers the marker into a
+// UIX.RectMesh<AudioSourceWaveformMesh>. Link it to an "Audio source" Reference
+// Field via the Waveform's audioLinkId in the inspector to make it live.
+function buildWaveform(cascade: number): Slot {
+  return wrap("Waveform", 360, 120, cascade, [], [
+    c("Waveform", { color: rgb(0.36, 0.84, 0.94), points: 256, thickness: 4, historyLength: 0.5 }),
+  ]);
+}
+
+// Avatar + name geometry for a User Profile card, shared by the widget builder
+// and the store's setUserProfileLayout so the editor toggle and a freshly-added
+// card always agree. Anchor-based (size-independent) so it scales with the card.
+export const USER_PROFILE_AVATAR = 48;
+export function userProfileLayout(pos: "left" | "above" | "right"): {
+  avatar: Record<string, unknown>;
+  name: Record<string, unknown>;
+  nameAlign: "Left" | "Center" | "Right";
+} {
+  const A = USER_PROFILE_AVATAR, PAD = 12, GAP = 12;
+  if (pos === "above") {
+    return {
+      avatar: { anchorMin: { x: 0.5, y: 1 }, anchorMax: { x: 0.5, y: 1 }, offsetMin: { x: -A / 2, y: -(PAD + A) }, offsetMax: { x: A / 2, y: -PAD }, pivot: { x: 0.5, y: 0.5 } },
+      name:   { anchorMin: { x: 0, y: 0 }, anchorMax: { x: 1, y: 1 }, offsetMin: { x: PAD, y: PAD }, offsetMax: { x: -PAD, y: -(PAD + A + GAP) }, pivot: { x: 0.5, y: 0.5 } },
+      nameAlign: "Center",
+    };
+  }
+  if (pos === "right") {
+    return {
+      avatar: { anchorMin: { x: 1, y: 0.5 }, anchorMax: { x: 1, y: 0.5 }, offsetMin: { x: -(PAD + A), y: -A / 2 }, offsetMax: { x: -PAD, y: A / 2 }, pivot: { x: 0.5, y: 0.5 } },
+      name:   { anchorMin: { x: 0, y: 0 }, anchorMax: { x: 1, y: 1 }, offsetMin: { x: PAD, y: 0 }, offsetMax: { x: -(PAD + A + GAP), y: 0 }, pivot: { x: 0.5, y: 0.5 } },
+      nameAlign: "Right",
+    };
+  }
+  return {
+    avatar: { anchorMin: { x: 0, y: 0.5 }, anchorMax: { x: 0, y: 0.5 }, offsetMin: { x: PAD, y: -A / 2 }, offsetMax: { x: PAD + A, y: A / 2 }, pivot: { x: 0.5, y: 0.5 } },
+    name:   { anchorMin: { x: 0, y: 0 }, anchorMax: { x: 1, y: 1 }, offsetMin: { x: PAD + A + GAP, y: 0 }, offsetMax: { x: -PAD, y: 0 }, pivot: { x: 0.5, y: 0.5 } },
+    nameAlign: "Left",
+  };
+}
+
+// User Profile card — a rounded surface with an avatar (circular image
+// placeholder) and a name label. Editor-only marker (skipped at export). The
+// avatar position (left/above/right) is re-laid by setUserProfileLayout.
+function buildUserProfile(cascade: number): Slot {
+  const lay = userProfileLayout("left");
+  // Plain neutral circle (NOT the image placeholder — the placeholder injects an
+  // overlay glyph child that would sit on top of the fetched profile picture). The
+  // exporter points this Image.Sprite at the live CloudUserInfo profile texture.
+  const avatar = s("Avatar", [
+    c("RectTransform", lay.avatar),
+    c("Image", { tint: rgb(0.3, 0.33, 0.38), preserveAspect: true, spriteUrl: "", cornerRadius: 100, placeholderRemoved: true }),
+  ]);
+  const name = s("Name", [
+    c("RectTransform", lay.name),
+    c("Text", { content: "Username", size: 16, color: white(), horizontalAlign: lay.nameAlign, verticalAlign: "Middle", autoSize: false }),
+  ]);
+  return wrap("User Profile", 260, 80, cascade, [avatar, name], [
+    c("Image", { tint: rgb(0.13, 0.15, 0.18), preserveAspect: false, spriteUrl: "", cornerRadius: 14, placeholderRemoved: true }),
+    c("UserProfile", { avatarPosition: "left" }),
+  ]);
+}
+
 function buildDropdown(cascade: number): Slot {
   const trigger = rightControl("Trigger", 200, 32, [
     c("Image", { tint: rgb(0.14, 0.16, 0.20), preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
@@ -549,6 +612,8 @@ const BUILDERS: Partial<Record<PaletteItem, (cascade: number) => Slot>> = {
   RadioGroup: buildRadioGroup,
   ScrollArea: buildScrollArea,
   Tabs: buildTabs,
+  Waveform: buildWaveform,
+  UserProfile: buildUserProfile,
   // Widget-only pseudo-type (not a UixComponent) — see palette.ts WIDGET_ONLY_ITEMS.
   Spinner: buildSpinner,
 };

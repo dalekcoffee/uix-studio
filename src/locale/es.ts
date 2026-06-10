@@ -318,6 +318,13 @@ export const es: Dictionary = {
     labelTop: "▤ Arriba",
     labelLeftHint: "Etiqueta a la izquierda del control",
     labelTopHint: "Etiqueta encima del control",
+    direction: "Dirección",
+    directionHorizontal: "↔ Horizontal",
+    directionVertical: "↕ Vertical",
+    avatarPosition: "Posición del avatar",
+    avatarLeft: "◧ Izquierda",
+    avatarAbove: "▲ Arriba",
+    avatarRight: "Derecha ◨",
     managedByLayout: "gestionado por el diseño",
   },
 

@@ -3,7 +3,7 @@ import { findSlot } from "../model/operations";
 import type { Slot, UixComponent, UixComponentType } from "../model/types";
 import { FIELD_DESCRIPTORS } from "../model/components";
 import { DEFAULT_CONTENT_PADDING } from "../model/padding";
-import { controlDisplayName, LABELLED_CONTROL_TYPES, labelPositionOf } from "../model/controlName";
+import { controlDisplayName, LABELLED_CONTROL_TYPES, isVerticalProgressBar, labelPositionOf } from "../model/controlName";
 import { controllingClickable } from "../model/clickable";
 import { tabStructuralHost, getTabs, activeTabIndex, tabsPositionOf, type TabPosition } from "../model/tabs";
 import { Field, computeEffectiveDefault } from "./inspector/FieldInput";
@@ -111,7 +111,13 @@ export default function Inspector() {
           {slot.id !== root.id && slot.components.some((c) => c.type === "RectTransform") && (
             <AlignWidget slot={slot} />
           )}
-          {slot.id !== root.id && isLabelPositionEditable(slot) && (
+          {slot.id !== root.id && isProgressBarComposite(slot) && (
+            <DirectionField slot={slot} />
+          )}
+          {slot.id !== root.id && slot.components.some((c) => c.type === "UserProfile") && (
+            <AvatarPositionField slot={slot} />
+          )}
+          {slot.id !== root.id && isLabelPositionEditable(slot) && progressBarDirectionOf(slot) !== "Vertical" && (
             <LabelPositionField slot={slot} />
           )}
           <ComponentList
@@ -1183,6 +1189,91 @@ function LabelPositionField({ slot }: { slot: Slot }) {
       <div className="flex gap-1">
         {opt("left", t.inspector.labelLeft, t.inspector.labelLeftHint)}
         {opt("top", t.inspector.labelTop, t.inspector.labelTopHint)}
+      </div>
+    </div>
+  );
+}
+
+// A Progress Bar composite (a labelled single-control composite whose control
+// child carries the ProgressBar marker). Eligible for the Direction toggle.
+function isProgressBarComposite(slot: Slot): boolean {
+  if (!isLabelPositionEditable(slot)) return false;
+  return slot.children.some((c) => c.components.some((k) => k.type === "ProgressBar"));
+}
+function progressBarDirectionOf(slot: Slot): "Horizontal" | "Vertical" {
+  // Same Track scan as the shared predicate — keep them in lockstep.
+  return isVerticalProgressBar(slot) ? "Vertical" : "Horizontal";
+}
+
+// Horizontal / Vertical toggle for a Progress Bar. Calls setProgressBarDirection,
+// which reshapes the bar (vertical = tall narrow column, top label + fill Track)
+// and reflows the container.
+function DirectionField({ slot }: { slot: Slot }) {
+  const t = useT();
+  const setProgressBarDirection = useStore((s) => s.setProgressBarDirection);
+  const dir = progressBarDirectionOf(slot);
+  const opt = (value: "Horizontal" | "Vertical", label: string) => (
+    <button
+      key={value}
+      aria-pressed={dir === value}
+      onClick={() => setProgressBarDirection(slot.id, value)}
+      className={`flex-1 rounded border px-2 py-1 text-xs transition ${
+        dir === value
+          ? "border-sky-500 bg-sky-600/20 text-sky-200"
+          : "border-slate-700 bg-slate-800 text-slate-300 hover:border-sky-500 hover:text-sky-300"
+      }`}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div className="border-b border-slate-800 px-3 py-3">
+      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+        {t.inspector.direction}
+      </div>
+      <div className="flex gap-1">
+        {opt("Horizontal", t.inspector.directionHorizontal)}
+        {opt("Vertical", t.inspector.directionVertical)}
+      </div>
+    </div>
+  );
+}
+
+// Left / Above / Right toggle for a User Profile card's avatar. Calls
+// setUserProfileLayout, which re-lays the Avatar + Name children and resizes the
+// card. Mirrors DirectionField / LabelPositionField.
+function avatarPositionOf(slot: Slot): "left" | "above" | "right" {
+  const m = slot.components.find((c) => c.type === "UserProfile");
+  const p = (m?.props as { avatarPosition?: string } | undefined)?.avatarPosition;
+  return p === "above" || p === "right" ? p : "left";
+}
+function AvatarPositionField({ slot }: { slot: Slot }) {
+  const t = useT();
+  const setUserProfileLayout = useStore((s) => s.setUserProfileLayout);
+  const pos = avatarPositionOf(slot);
+  const opt = (value: "left" | "above" | "right", label: string) => (
+    <button
+      key={value}
+      aria-pressed={pos === value}
+      onClick={() => setUserProfileLayout(slot.id, value)}
+      className={`flex-1 rounded border px-2 py-1 text-xs transition ${
+        pos === value
+          ? "border-sky-500 bg-sky-600/20 text-sky-200"
+          : "border-slate-700 bg-slate-800 text-slate-300 hover:border-sky-500 hover:text-sky-300"
+      }`}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div className="border-b border-slate-800 px-3 py-3">
+      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+        {t.inspector.avatarPosition}
+      </div>
+      <div className="flex gap-1">
+        {opt("left", t.inspector.avatarLeft)}
+        {opt("above", t.inspector.avatarAbove)}
+        {opt("right", t.inspector.avatarRight)}
       </div>
     </div>
   );

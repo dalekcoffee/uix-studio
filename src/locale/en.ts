@@ -352,6 +352,15 @@ export const en = {
     labelTop: "▤ Top",
     labelLeftHint: "Label to the left of the control",
     labelTopHint: "Label above the control",
+    // Progress bar direction
+    direction: "Direction",
+    directionHorizontal: "↔ Horizontal",
+    directionVertical: "↕ Vertical",
+    // User Profile avatar position
+    avatarPosition: "Avatar Position",
+    avatarLeft: "◧ Left",
+    avatarAbove: "▲ Above",
+    avatarRight: "Right ◨",
     // Align widget
     managedByLayout: "managed by layout",
   },

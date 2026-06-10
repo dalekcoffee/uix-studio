@@ -105,6 +105,29 @@ export function computeCompositeLayout(
   return { label, control, wrapperH: COMPOSITE_ROW_H };
 }
 
+// Vertical progress-bar layout — the label is a top band and the control (the
+// bar Track) FILLS the area below it (full width, full remaining height). Fill
+// anchors mean the track auto-scales when the wrapper is resized taller, so no
+// per-resize recompute is needed. `controlH` only seeds the natural wrapper
+// height for a fresh convert; once placed, the wrapper height is user-driven.
+export function verticalBarLayout(controlH: number): CompositeLayout {
+  const label: RTRect = {
+    anchorMin: { x: 0, y: 1 }, anchorMax: { x: 1, y: 1 },
+    offsetMin: { x: 0, y: -LABEL_BAND_H }, offsetMax: { x: 0, y: 0 },
+  };
+  const control: RTRect = {
+    anchorMin: { x: 0, y: 0 }, anchorMax: { x: 1, y: 1 },
+    offsetMin: { x: 0, y: 0 }, offsetMax: { x: 0, y: -(LABEL_BAND_H + COMPOSITE_GAP_V) },
+  };
+  return { label, control, wrapperH: LABEL_BAND_H + COMPOSITE_GAP_V + controlH };
+}
+
+// Default narrow column width for a vertical progress bar (the wrapper width a
+// horizontal bar collapses to when toggled vertical).
+export const VERTICAL_BAR_WIDTH = 64;
+// Default track height for a fresh vertical-bar convert.
+export const VERTICAL_BAR_HEIGHT = 220;
+
 // No-clip MINIMUM wrapper width for a single-control composite in either label
 // position. Left = label + gap + control (they sit side-by-side). Top = the
 // wider of the two stacked pieces (a stretchy control floors at its min; a

@@ -177,10 +177,20 @@ const textFieldSchema = z.object({
   backgroundTint: color.default({ r: 0.12, g: 0.12, b: 0.12, a: 1 }),
   fieldType: z.enum(["text", "float", "int"]).default("text"),
   textAlign: z.enum(["Left", "Center", "Right"]).default("Left"),
+  // Float display rounding — digits shown after the decimal point. Default 2 so a
+  // driven value (e.g. a slider feeding a float field) shows "0.48" instead of
+  // overflowing the box with "0.4807973…". Only the float parser reads it.
+  decimalPlaces: z.number().int().default(2),
   // Theme opt-out — see imageSchema.themeLock. When true, Theme apply leaves
   // this field's text/placeholder/background colors alone (keeps the white login
   // input fields white with dark text on any theme). Not user-editable.
   themeLock: z.boolean().optional(),
+  // Cross-element link (internal plumbing — not in FIELD_DESCRIPTORS). When set on
+  // a numeric (float/int) field, the exporter two-way-binds this field's parsed
+  // value to the Slider whose `linkId` matches, via a ValueCopy<float> with
+  // WriteBack — so the field both displays and sets the slider. See the "🔗 Links"
+  // post-traversal pass in exportBrson.ts.
+  bindSliderId: z.string().default(""),
 });
 
 const buttonSchema = z.object({
@@ -189,6 +199,10 @@ const buttonSchema = z.object({
   pressColor: color.default({ r: 0.15, g: 0.15, b: 0.15, a: 1 }),
   disabledColor: color.default({ r: 0.30, g: 0.30, b: 0.30, a: 1 }),
   hoverVibrate: z.boolean().default(false),
+  // "Take ownership" wiring: when set to a UserProfile slot's (editor) id, the
+  // exporter adds a ButtonDynamicImpulseTrigger so pressing this button assigns the
+  // pressing user to that profile (avatar + name). Empty = ordinary button.
+  takeOwnershipLinkId: z.string().default(""),
 });
 
 // Container padding defaults are the -1 "auto / inherit" sentinel (mirrors the
@@ -344,6 +358,9 @@ const sliderSchema = z.object({
   fillColor: color.default({ r: 0.18, g: 0.36, b: 0.6, a: 1 }),
   clamp: z.boolean().default(true),
   requireInitialPress: z.boolean().default(true),
+  // Cross-element link source id (internal plumbing). A float field whose
+  // `bindSliderId` matches two-way-binds to this slider's value. See exportBrson.
+  linkId: z.string().default(""),
 });
 
 // ProgressBar marks a slot as a static visual progress indicator. The host
@@ -358,6 +375,40 @@ const progressBarSchema = z.object({
   max: z.number().default(1),
   direction: z.enum(["Horizontal", "Vertical"]).default("Horizontal"),
   fillColor: color.default({ r: 0.18, g: 0.36, b: 0.6, a: 1 }),
+  // Cross-element link target id (internal plumbing). When set, the exporter
+  // drives this bar's fill color from the ColorPicker whose `linkId` matches,
+  // via a ValueCopy<colorX>. See the "🔗 Links" pass in exportBrson.ts.
+  colorLinkId: z.string().default(""),
+});
+
+// Waveform marks a slot as an audio waveform visualizer. At export the slot
+// becomes a UIX.RectMesh<AudioSourceWaveformMesh> (procedural live-waveform mesh,
+// rendered with the canvas default UI material — no material to bundle) plus a
+// ReferenceCast<IWorldElement, IWorldAudioDataSource> that feeds the mesh's
+// audio Source. `audioLinkId` pairs it with a ReferenceField whose matching
+// `audioLinkId` holds the dropped "Audio source" — the exporter wires a
+// ReferenceCopy from that field into the cast (see the "🔗 Links" pass).
+const waveformSchema = z.object({
+  color: color.default({ r: 0.88, g: 0.88, b: 0.88, a: 1 }),
+  // Mesh.Points — horizontal sample count (resolution of the trace).
+  points: z.number().int().min(2).default(256),
+  // Mesh.Width — line thickness of the trace.
+  thickness: z.number().min(0.5).default(4),
+  // Mesh.HistoryLength — seconds of audio history the trace spans.
+  historyLength: z.number().min(0.05).default(0.5),
+  // Cross-element link target id (internal plumbing). The ReferenceField whose
+  // `audioLinkId` matches drives this waveform's audio source.
+  audioLinkId: z.string().default(""),
+});
+
+// UserProfile marks a slot as a "member card": a rounded card holding an avatar
+// (a circular image placeholder the end user fills) and a name label. Editor-only
+// — at export the marker is skipped and the Card Image + Avatar Image + Name Text
+// serialize as ordinary slots. `avatarPosition` re-lays the avatar relative to
+// the name (the store action setUserProfileLayout + the widget builder share the
+// geometry in userProfileLayout()).
+const userProfileSchema = z.object({
+  avatarPosition: z.enum(["left", "above", "right"]).default("left"),
 });
 
 // Radio marks a slot as one option in a mutually-exclusive group. At export
@@ -409,6 +460,10 @@ const colorPickerSchema = z.object({
   initialColor: color.default({ r: 0.18, g: 0.36, b: 0.6, a: 1 }),
   alpha: z.boolean().default(true),
   hdr: z.boolean().default(false),
+  // Cross-element link source id (internal plumbing). A ProgressBar whose
+  // `colorLinkId` matches has its fill color driven by this picker's chosen
+  // color, via a ValueCopy<colorX>. See exportBrson.ts.
+  linkId: z.string().default(""),
 });
 
 // KeypadDisplay marks the slot whose Text component receives keypad input.
@@ -465,6 +520,9 @@ const referenceFieldSchema = z.object({
   fieldColor:  color.default({ r: 0.024, g: 0.028, b: 0.036, a: 1 }),
   buttonColor: color.default({ r: 0.024, g: 0.028, b: 0.036, a: 1 }),
   textColor:   color.default({ r: 0.88, g: 0.88, b: 0.88, a: 1 }),
+  // Cross-element link source id (internal plumbing). When set, a Waveform whose
+  // `audioLinkId` matches has its audio source driven by the object dropped here.
+  audioLinkId: z.string().default(""),
 });
 
 // ScrollArea marks a slot as a scrollable viewport. At export the slot is
@@ -551,6 +609,13 @@ const tabsSchema = z.object({
   // Outer frame / header backdrop — the card the whole tabbed group sits on.
   frameColor:    color.default({ r: 0.09, g: 0.10, b: 0.13, a: 1 }),
   labelColor:    color.default({ r: 0.95, g: 0.95, b: 0.95, a: 1 }),
+  // Visual style. "folder" = the classic tabbed card (frame + page panel + the
+  // active tab merging into the body). "segmented" = a pill/segmented selector
+  // with no frame and seamless (background-less) pages — the active tab reads as
+  // a highlighted button above the content. Style is realized by how the tab
+  // bar/pages are authored (frame & page Images present or not, tab colors); the
+  // export's tab MECHANISM is identical either way.
+  tabStyle: z.enum(["folder", "segmented"]).default("folder"),
 });
 
 // TabButton / TabPage: empty markers. A TabButton's index is its position among
@@ -596,6 +661,8 @@ export const COMPONENT_SCHEMAS = {
   KeypadKey: keypadKeySchema,
   Close: closeSchema,
   ReferenceField: referenceFieldSchema,
+  Waveform: waveformSchema,
+  UserProfile: userProfileSchema,
   ScrollArea: scrollAreaSchema,
   Tabs: tabsSchema,
   TabButton: tabButtonSchema,
@@ -726,6 +793,9 @@ export const FIELD_DESCRIPTORS: Record<UixComponentType, readonly FieldDescripto
     { key: "textColor", label: "Text Color", kind: "color" },
     { key: "placeholderColor", label: "Placeholder Color", kind: "color" },
     { key: "backgroundTint", label: "Background Tint", kind: "color" },
+    // Float fields only — digits shown after the decimal point (default 2).
+    // Hidden for text/int fields via visibleWhen (only the float parser reads it).
+    { key: "decimalPlaces", label: "Decimal Places", kind: "number", visibleWhen: { key: "fieldType", value: "float" } },
   ],
   // `normalColor` is intentionally omitted — the resting/visible color of a
   // button is the sibling Image's `tint` (shown as "Color" on the graphic).
@@ -907,6 +977,15 @@ export const FIELD_DESCRIPTORS: Record<UixComponentType, readonly FieldDescripto
     { key: "buttonColor", label: "Button Color", kind: "color" },
     { key: "textColor",   label: "Text Color",   kind: "color" },
   ],
+  Waveform: [
+    { key: "color",         label: "Color",          kind: "color" },
+    { key: "points",        label: "Resolution",     kind: "number" },
+    { key: "thickness",     label: "Line Thickness", kind: "number", step: 0.5 },
+    { key: "historyLength", label: "History (s)",    kind: "number", step: 0.1 },
+  ],
+  // avatarPosition is edited via a custom Inspector toggle (it re-lays the avatar
+  // + name children, so it can't be a plain field write). No raw fields.
+  UserProfile: [],
   ScrollArea: [
     {
       key: "direction",

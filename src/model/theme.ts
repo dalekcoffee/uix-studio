@@ -563,24 +563,37 @@ export function applyContainerSurface(root: Slot, color: Color): Slot {
     if (isLocked(host.components.find((c) => c.type === "Image"))) return;
     const tabs = host.components.find((c) => c.type === "Tabs")!;
     const tp = tabs.props as Record<string, unknown>;
-    tp.pageColor = color;
+    // Segmented style (frameless pill selector, background-less pages) DEPENDS
+    // on frame/page/inactive staying transparent — only the active pill takes
+    // the container surface. Writing the opaque folder-style tones here would
+    // permanently turn the pills into a folder card (theme apply is a bulk
+    // write, not a live binding — undo is the only way back).
+    const segmented = ((tp.tabStyle as string) ?? "folder") === "segmented";
+    const transparent = rgb(0, 0, 0, 0);
+    tp.pageColor = segmented ? transparent : color;
     tp.activeColor = color;
-    tp.inactiveColor = inactive;
-    tp.frameColor = frame;
-    setComponentProp(host, "Image", "tint", frame);
-    for (const pg of host.children.filter((ch) => ch.components.some((c) => c.type === "TabPage"))) {
-      setComponentProp(pg, "Image", "tint", color);
+    tp.inactiveColor = segmented ? transparent : inactive;
+    tp.frameColor = segmented ? transparent : frame;
+    if (!segmented) {
+      setComponentProp(host, "Image", "tint", frame);
+      for (const pg of host.children.filter((ch) => ch.components.some((c) => c.type === "TabPage"))) {
+        setComponentProp(pg, "Image", "tint", color);
+      }
     }
     const bar = host.children.find((ch) => ch.children.some((g) => g.components.some((c) => c.type === "TabButton")));
     if (bar) {
       const buttons = bar.children.filter((g) => g.components.some((c) => c.type === "TabButton"));
       const activeIdx = Math.max(0, Math.min(buttons.length - 1, ((tp.activeTab as number) ?? 0) | 0));
       buttons.forEach((b, i) => {
-        const tint = i === activeIdx ? color : inactive;
+        const tint = i === activeIdx ? color : (segmented ? transparent : inactive);
         setComponentProp(b, "Image", "tint", tint);
         setComponentProp(b, "Button", "normalColor", tint);
-        setComponentProp(b, "Button", "highlightColor", lighten(tint, 0.10));
-        setComponentProp(b, "Button", "pressColor", lighten(tint, -0.08));
+        // Hover/press derive from the SURFACE color, not the resting tint — on a
+        // segmented inactive (transparent) pill this makes hover reveal a faint
+        // pill instead of staying invisible (lighten() preserves alpha 0).
+        const feedbackBase = segmented ? color : tint;
+        setComponentProp(b, "Button", "highlightColor", lighten(feedbackBase, 0.10));
+        setComponentProp(b, "Button", "pressColor", lighten(feedbackBase, -0.08));
       });
     }
   });

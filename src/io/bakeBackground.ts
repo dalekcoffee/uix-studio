@@ -163,18 +163,18 @@ export async function bakeBackgroundImage(
   const cr = Math.max(0, Math.min(100, opts?.cornerRadius ?? 0));
   if (cr > 0) {
     // The panel's backing rounds via a pill SpriteProvider with Borders=0.5 and
-    // FixedSize = (cr/100)·min/2. Resonite renders the corner at Borders×FixedSize
-    // — i.e. HALF the FixedSize on screen — so the bare-panel corner is sharper
-    // (smaller radius) than the FixedSize value. Baking at the full FixedSize
-    // over-rounded the wallpaper, leaving the sharper backing exposed as a dark
-    // crescent. Match the real render by halving. The Background's own Image is
-    // also forced to a full pill at export so it can never poke through even if
-    // this factor is slightly off — see exportBundle.
-    const FIXEDSIZE_TO_RENDERED = 0.5;
+    // FixedSize = (cr/100)·min. Resonite renders the corner at Borders×FixedSize
+    // — i.e. HALF the FixedSize on screen — so the visible panel radius is
+    // (cr/100)·min/2, the same proportional radius the editor preview draws.
+    // Bake the wallpaper at exactly that radius so it stays flush with the
+    // backing's sprite corner (over-rounding exposed the sharper backing as a
+    // dark crescent). The Background's own Image is also forced to a full pill
+    // at export so it can never poke through even if this is slightly off —
+    // see exportBundle.
     const half = Math.min(outW, outH) / 2;
     // cr=100 → the backing uses NineSliceSizing="RectHeight" (full pill, radius =
     // half the short side), not the FixedSize path; mirror that at the top end.
-    const rPx = cr >= 100 ? half : (cr / 100) * half * FIXEDSIZE_TO_RENDERED;
+    const rPx = cr >= 100 ? half : (cr / 100) * half;
     ctx.globalCompositeOperation = "destination-in";
     ctx.fillStyle = "#ffffff";
     traceRoundRect(ctx, 0, 0, outW, outH, rPx);

@@ -132,6 +132,45 @@ const FULL_TYPE: Record<string, string> = {
   // the uniform FrooxEngine dynamic-variable shape — NEEDS VR CONFIRMATION.
   DynamicReferenceVariableIWorldElement: "[FrooxEngine]FrooxEngine.DynamicReferenceVariable<[FrooxEngine]FrooxEngine.IWorldElement>",
   ReferenceCopyIWorldElement:            "[FrooxEngine]FrooxEngine.ReferenceCopy<[FrooxEngine]FrooxEngine.IWorldElement>",
+  // Waveform visualizer (modeled on AudioStreamController). RectMesh<T> is a UIX
+  // procedural-mesh graphic; the AudioSourceWaveformMesh generator draws the live
+  // trace of an IWorldAudioDataSource. The ReferenceCast downcasts the dropped
+  // "Audio source" (stored as IWorldElement) to IWorldAudioDataSource to feed it.
+  RectMeshAudioWaveform:       "[FrooxEngine]FrooxEngine.UIX.RectMesh<[FrooxEngine]FrooxEngine.AudioSourceWaveformMesh>",
+  ReferenceCastElementToAudio: "[FrooxEngine]FrooxEngine.ReferenceCast<[FrooxEngine]FrooxEngine.IWorldElement,[FrooxEngine]FrooxEngine.IWorldAudioDataSource>",
+  // ── User-profile ProtoFlux (verified against UIX Template/UX Nameplate Box) ──
+  // Each node = a slot whose BINDING component's ID is the node's identity;
+  // consumers put that ID in their own input field's Data. Driver/anchor nodes
+  // also carry a "+Proxy" twin (Node back-ref, Path, and Drive=target field UUID).
+  PFGetActiveUserSelf:         "[ProtoFluxBindings]FrooxEngine.ProtoFlux.Runtimes.Execution.Nodes.FrooxEngine.Slots.GetActiveUserSelf",
+  PFGetActiveUserSelfProxy:    "[ProtoFlux.Nodes.FrooxEngine]ProtoFlux.Runtimes.Execution.Nodes.FrooxEngine.Slots.GetActiveUserSelf+Proxy",
+  PFUserUsername:              "[ProtoFluxBindings]FrooxEngine.ProtoFlux.Runtimes.Execution.Nodes.FrooxEngine.Users.UserUsername",
+  PFUserUserID:                "[ProtoFluxBindings]FrooxEngine.ProtoFlux.Runtimes.Execution.Nodes.FrooxEngine.Users.UserUserID",
+  PFObjectFieldDriveString:    "[ProtoFluxBindings]FrooxEngine.FrooxEngine.ProtoFlux.CoreNodes.ObjectFieldDrive<string>",
+  PFFieldDriveBaseStringProxy: "[FrooxEngine]FrooxEngine.ProtoFlux.CoreNodes.FieldDriveBase<string>+Proxy",
+  // ── Cloud user profile (avatar picture + display name) ──────────────────
+  // Reverse-engineered from a "3D VRChat Nameplate" reference export (decoded
+  // via Export References/decode.mjs). The READ pipeline is:
+  //   CloudUserInfo.UserId (string in) → IconURL (Uri out) + Username (string out)
+  //   ValueCopy<Uri>:    CloudUserInfo.IconURL  → StaticTexture2D.URL  → SpriteProvider → Avatar.Sprite
+  //   ValueCopy<string>: CloudUserInfo.Username → Name Text.Content
+  // CloudUserInfo type/fields verified verbatim from that decode; ValueCopy<Uri>
+  // mirrors the existing ValueCopy<T> shape (Source/Target/WriteBack).
+  CloudUserInfo:               "[FrooxEngine]FrooxEngine.CloudUserInfo",
+  ValueCopyUri:                "[FrooxEngine]FrooxEngine.ValueCopy<Uri>",
+  // ── "Take ownership" assignment (one-shot, button-triggered) ────────────
+  // VR-PENDING / EMITTED BLIND: no reference export contains these three shapes
+  // (ObjectWrite is in the nameplate's Types registry but never instantiated;
+  // DynamicImpulseReceiver + ButtonDynamicImpulseTrigger appear in NO reference).
+  // Chain: ButtonDynamicImpulseTrigger fires Tag on press → DynamicImpulseReceiver
+  // (same Tag) flow → ObjectWrite<string> writes LocalUser→UserUserID into the
+  // CloudUserInfo.UserId field. Type strings are best-recall; field shapes are
+  // best-guess modeled on the existing ObjectFieldDrive proxy pattern. Confirm
+  // the exact BSON against an in-headset capture before trusting it.
+  PFLocalUser:                 "[ProtoFluxBindings]FrooxEngine.ProtoFlux.Runtimes.Execution.Nodes.FrooxEngine.Users.LocalUser",
+  PFObjectWriteString:         "[ProtoFluxBindings]FrooxEngine.ProtoFlux.Runtimes.Execution.Nodes.ObjectWrite<[FrooxEngine]FrooxEngine.ProtoFlux.FrooxEngineContext,string>",
+  PFDynamicImpulseReceiver:    "[ProtoFluxBindings]FrooxEngine.ProtoFlux.Runtimes.Execution.Nodes.FrooxEngine.DynamicImpulseReceiver",
+  ButtonDynamicImpulseTrigger: "[FrooxEngine]FrooxEngine.UIX.ButtonDynamicImpulseTrigger",
   // ProtoFlux node typenames (full classpath). The pattern is:
   //   WorldTimeFloat → ValueMul<float>(× speed) → ValueMod<float>(% wrap)
   //     → ValueFieldDrive<float>(Drive: gradientProgressFieldId)
@@ -296,6 +335,16 @@ let _frontFacingMatId = ""; // UI_UnlitMaterial w/ Sidedness=Front + offset (for
 let _textureId = "";   // legacy rounded-sprite StaticTexture2D ID (canvas.rounded only)
 let _logoTextureId = "";  // logo PNG StaticTexture2D ID (always bundled)
 let _logoSpriteId = "";   // logo SpriteProvider component ID (on canvas slot)
+// Root grabbable wrapper slot ID — captured in buildRootWrapper before the tree is
+// serialized, so a "Take ownership" button's ButtonDynamicImpulseTrigger can target
+// the whole panel's hierarchy (where the UserProfile's DynamicImpulseReceiver lives).
+let _rootWrapperId = "";
+// Deterministic dynamic-impulse tag shared by a UserProfile (receiver) and the
+// "Take ownership" button (trigger) that targets it. Keyed by the UserProfile's
+// EDITOR slot id so both sides agree without threading the BSON id around.
+function takeOwnershipTag(userProfileEditorId: string): string {
+  return `uixstudio-takeown-${userProfileEditorId}`;
+}
 let _helpTexId = "";    let _helpSpriteId = "";   // help icon  (top-left header button)
 let _closeTexId = "";   let _closeSpriteId = "";  // close icon (top-right header button)
 let _checkTexId = "";   let _checkSpriteId = "";  // check icon (checkbox)
@@ -383,7 +432,9 @@ let _stackLayoutOn = true;
 // SAME absolute radius as the panel rather than one proportional to its own
 // (smaller) size — e.g. a full-width header bar whose own height would
 // otherwise give a much tighter corner. 0 = panel isn't rounded. Computed at
-// export from the Front Backing's cornerRadius and the canvas size.
+// export from the Front Backing's cornerRadius and the canvas size. NOTE:
+// this is a FixedSize, i.e. TWICE the visible corner radius (the corner
+// renders at Borders×FixedSize = half).
 let _panelCornerFixedSizePx = 0;
 
 // Pre-allocated Active-field UUIDs for popup spawn-window modals. Keyed by
@@ -434,7 +485,7 @@ let _dropdownTextContentIds: Map<string, string> = new Map();
 let _pendingImageExtras: Array<{ Type: Int32; Data: Record<string, unknown> }> = [];
 // Pixel rect of the slot whose Image is currently being built. Set by
 // serializeSlot (and synthetic builders) right before calling compImage so the
-// intermediate-cornerRadius path can bake FixedSize = (cr/100) × min(w,h)/2.
+// intermediate-cornerRadius path can bake FixedSize = (cr/100) × min(w,h).
 // Null → fall back to the runtime-proportional RectHeight pill for any non-zero
 // radius (no static rect available).
 let _currentImageRect: { w: number; h: number } | null = null;
@@ -550,6 +601,58 @@ function compSpriteProvider(
     Borders: fd(borders),
     Scale: fd(scale),
     FixedSize: fd(fixedSize),
+  };
+}
+
+// CloudUserInfo — fetches a user's cloud profile from a UserId string and exposes
+// Username (string) + IconURL (Uri = profile picture URL). Field set taken verbatim
+// from the decoded "3D VRChat Nameplate" reference. (The decoder sorts keys, so the
+// order below is natural rather than the original BSON order — CloudUserInfo is not a
+// material, so field order is not depth-sensitive.) Returns the field UUIDs the
+// downstream ValueCopy components need to read the outputs / write the UserId input.
+function compCloudUserInfo(userId: string): {
+  data: Record<string, unknown>;
+  userIdFieldId: string;
+  usernameFieldId: string;
+  iconUrlFieldId: string;
+} {
+  const userIdFieldId = nextId();
+  const usernameFieldId = nextId();
+  const iconUrlFieldId = nextId();
+  return {
+    userIdFieldId,
+    usernameFieldId,
+    iconUrlFieldId,
+    data: {
+      ...baseComp(),
+      // UserId is the INPUT — left empty until the "Take ownership" button writes
+      // the pressing user's id into it (see buildUserProfileFlux).
+      UserId: { ID: userIdFieldId, Data: userId },
+      // Driven OUTPUTS — populated asynchronously by Resonite after the fetch.
+      // Emitted with stable IDs so the ValueCopy<Uri>/<string> can reference them.
+      Username: { ID: usernameFieldId, Data: null },
+      IconURL: { ID: iconUrlFieldId, Data: null },
+      IsLoaded: fd(null),
+      "Pronouns-ID": nextId(),
+      "RegistrationDate-ID": nextId(),
+      "OriginalRegistrationDate-ID": nextId(),
+      "IsContact-ID": nextId(),
+      "_loadedUserId-ID": nextId(),
+    },
+  };
+}
+
+// ButtonDynamicImpulseTrigger — sits on the same slot as a UIX.Button; on press it
+// broadcasts a dynamic impulse with `Tag` into the `Target` slot's hierarchy. The
+// UserProfile's DynamicImpulseReceiver (same Tag) catches it to run the one-shot
+// "Take ownership" write. VR-PENDING / BLIND: this type + field shape appear in NO
+// reference export — best-recall name, best-guess fields (Target + Tag). Confirm
+// against an in-headset capture.
+function compButtonDynamicImpulseTrigger(targetSlotId: string, tag: string): Record<string, unknown> {
+  return {
+    ...baseComp(),
+    Target: fd(targetSlotId),
+    Tag: fd(tag),
   };
 }
 
@@ -1427,9 +1530,10 @@ function compImage(p: Record<string, unknown>): Record<string, unknown> {
   // - Corner shape: the unified `cornerRadius` (0-100) lowered onto the pill
   //   quarter-circle texture (Borders=0.5). cr===100 → NineSliceSizing=
   //   "RectHeight" (radius = half height, runtime-correct at any size). 0<cr<100
-  //   → a per-Image SpriteProvider with NineSliceSizing="FixedSize" where
-  //   FixedSize = (cr/100) × half the shorter dim, baked from the slot rect.
-  //   cr===0 → no sprite (square).
+  //   → a per-Image SpriteProvider with NineSliceSizing="FixedSize". The corner
+  //   renders at Borders×FixedSize = HALF the FixedSize, so the target radius
+  //   (cr/100) × half the shorter dim needs FixedSize = (cr/100) × min(w,h),
+  //   baked from the slot rect. cr===0 → no sprite (square).
   // Custom user-uploaded image wins over everything else — if the slot has
   // its own image, that's clearly the intent.
   const customHash = (p.customImageHash as string | undefined) ?? "";
@@ -1454,11 +1558,12 @@ function compImage(p: Record<string, unknown>): Record<string, unknown> {
   const cornerRadius = wantsShape
     ? Math.max(0, Math.min(100, typeof p.cornerRadius === "number" ? (p.cornerRadius as number) : 0))
     : 0;
-  // Internal escape hatch: an explicit corner radius in pixels, bypassing the
-  // cornerRadius% → RectHeight pill. Used by synthetic thin elements (the
-  // scrollbar) that need a far lower, hand-capped radius than a normal pill —
-  // RectHeight would set the radius to half the bar's LONG span and pinch the
-  // corners into a point. Not user-facing on regular Images.
+  // Internal escape hatch: an explicit SpriteProvider FixedSize in pixels
+  // (renders a corner radius of HALF this value), bypassing the cornerRadius%
+  // → RectHeight pill. Used by synthetic thin elements (the scrollbar) that
+  // need a far lower, hand-capped radius than a normal pill — RectHeight would
+  // set the radius to half the bar's LONG span and pinch the corners into a
+  // point. Not user-facing on regular Images.
   // `_pillFixedSizePx` is an explicit per-Image override (px); `matchPanelCorners`
   // pins the FixedSize to the panel's own corner so a panel-edge element (header
   // bar) rounds identically to the rounded canvas instead of off its own size.
@@ -1467,7 +1572,13 @@ function compImage(p: Record<string, unknown>): Record<string, unknown> {
     : typeof p._pillFixedSizePx === "number"
     ? Math.max(0, p._pillFixedSizePx as number)
     : p.matchPanelCorners === true && _panelCornerFixedSizePx > 0
-    ? _panelCornerFixedSizePx
+    // Cap at the element's own min dimension (= a half-min corner radius) so a
+    // thin panel-edge bar can't over-round past a full pill — mirrors the
+    // preview's Math.min(panelCornerPx, halfMin).
+    ? Math.min(
+        _panelCornerFixedSizePx,
+        _currentImageRect ? Math.min(_currentImageRect.w, _currentImageRect.h) : _panelCornerFixedSizePx,
+      )
     : 0;
   let shapeSpriteId: string | null = null;
   let shapeSizing: "RectHeight" | "FixedSize" | null = null;
@@ -1477,17 +1588,34 @@ function compImage(p: Record<string, unknown>): Record<string, unknown> {
     shapeSizing = "FixedSize";
     _pendingImageExtras.push({ Type: typeIndex("SpriteProvider"), Data: sp });
   } else if (cornerRadius >= 100 && _pillSpriteId) {
-    // Full pill — radius tracks half the height at runtime (RectHeight), no
-    // baked rect. Robust for layout-driven elements whose static rect estimate
-    // would otherwise be wrong.
-    shapeSpriteId = _pillSpriteId;
-    shapeSizing = "RectHeight";
+    // Full pill. RectHeight sets the radius to half the HEIGHT at runtime — a
+    // true stadium for wide/short rects, but on a TALL narrow rect that radius
+    // exceeds half the width and the sprite degenerates into an ellipse. When a
+    // static rect is known and the element is taller than wide, bake a FixedSize
+    // pill instead. Resonite renders the corner at Borders×FixedSize = HALF the
+    // FixedSize (verified — see bakeBackground.ts), so a w/2 corner radius needs
+    // FixedSize = w. This matches the web preview's full vertical capsule
+    // (border-radius = min(w,h)/2); FixedSize = w/2 rendered only a w/4 corner.
+    // Wide/square or rectless elements keep the runtime RectHeight pill.
+    const rect = _currentImageRect;
+    if (rect && rect.h > rect.w && _pillTexId) {
+      const sp = compSpriteProvider(_pillTexId, [0.5, 0.5, 0.5, 0.5], 1, rect.w);
+      shapeSpriteId = sp.ID as string;
+      shapeSizing = "FixedSize";
+      _pendingImageExtras.push({ Type: typeIndex("SpriteProvider"), Data: sp });
+    } else {
+      shapeSpriteId = _pillSpriteId;
+      shapeSizing = "RectHeight";
+    }
   } else if (cornerRadius > 0 && _pillTexId) {
-    // Intermediate radius — bake FixedSize from the slot's static rect. If no
-    // rect is known here, fall back to the runtime-proportional pill.
+    // Intermediate radius — bake FixedSize from the slot's static rect. The
+    // target on-screen radius is (cr/100) × min(w,h)/2 (the preview's CSS
+    // border-radius); the rendered corner is HALF the FixedSize, so double it:
+    // FixedSize = (cr/100) × min(w,h). If no rect is known here, fall back to
+    // the runtime-proportional pill.
     const rect = _currentImageRect;
     if (rect) {
-      const fixedSizePx = (cornerRadius / 100) * (Math.min(rect.w, rect.h) / 2);
+      const fixedSizePx = (cornerRadius / 100) * Math.min(rect.w, rect.h);
       const sp = compSpriteProvider(_pillTexId, [0.5, 0.5, 0.5, 0.5], 1, fixedSizePx);
       shapeSpriteId = sp.ID as string;
       shapeSizing = "FixedSize";
@@ -1638,7 +1766,12 @@ function compTextField(editorComponentId: string): Record<string, unknown> {
 // FloatTextEditorParser — sits on the same slot as TextField+TextEditor and
 // auto-discovers the TextEditor to restrict input to valid floats. Min/Max of
 // ±Infinity = unconstrained. DecimalPlaces = Int32.MAX_VALUE = unlimited.
-function compFloatTextEditorParser(): Record<string, unknown> {
+function compFloatTextEditorParser(decimalPlaces = 2): Record<string, unknown> {
+  // Sanitize: a raw Inspector write can transiently hand us NaN or a fraction,
+  // which would bake a malformed format string ("0." for NaN). Truncate to an
+  // int and cap at 10 digits (beyond float precision anyway). Negative stays
+  // the "unlimited" sentinel.
+  const dp = Number.isFinite(decimalPlaces) ? Math.min(10, Math.trunc(decimalPlaces)) : 2;
   return {
     ...baseComp(),
     ParseContinuously:      fd(true),
@@ -1646,8 +1779,13 @@ function compFloatTextEditorParser(): Record<string, unknown> {
     ParsedValue:            fd(0.0),
     Min:                    fd(-Infinity),
     Max:                    fd(Infinity),
-    DecimalPlaces:          fi(2147483647),
-    StringFormat:           fd(null),
+    // DecimalPlaces alone does NOT round the DRIVEN display (a slider feeding
+    // ParsedValue still showed full precision in-headset). `StringFormat` is the
+    // field that actually formats value→text: a .NET numeric format string
+    // ("0.00" = fixed 2 decimals). Set both. Negative decimalPlaces = unlimited
+    // (null format → round-trip precision, the old behavior).
+    DecimalPlaces:          fi(dp < 0 ? 2147483647 : dp),
+    StringFormat:           fd(dp < 0 ? null : dp === 0 ? "0" : "0." + "0".repeat(dp)),
   };
 }
 
@@ -2029,6 +2167,42 @@ function compReferenceCopy(
     Source: fd(sourceFieldId),
     Target: fd(targetFieldId),
     WriteBack: fd(writeBack),
+  };
+}
+
+// UIX.RectMesh<AudioSourceWaveformMesh> — a procedural graphic that draws the
+// live audio waveform of its Mesh.Source (an IWorldAudioDataSource). Structure
+// verified against UIX Template/AudioStreamController. `Mesh` is a nested data
+// object (not a component); its `Source` field is left null and driven by a
+// sibling ReferenceCast. Materials is empty → renders with the canvas default UI
+// material (no material to bundle). Returns the Mesh.Source field id so the cast
+// can target it.
+function compRectMeshWaveform(
+  color: { r: number; g: number; b: number; a: number },
+  points: number,
+  width: number,
+  historyLength: number,
+): { data: Record<string, unknown>; sourceFieldId: string } {
+  const base = baseComp();
+  const sourceFieldId = nextId();
+  return {
+    sourceFieldId,
+    data: {
+      ...base,
+      Mesh: {
+        ID: nextId(),
+        Source:        { ID: sourceFieldId, Data: null },
+        // Clamp alongside Points — schema mins only apply at parse time, so a
+        // zero/negative Inspector edit would otherwise export garbage mesh
+        // params. NaN falls through Math.max, so guard it back to defaults too.
+        HistoryLength: fd(Math.max(0.05, Number.isFinite(historyLength) ? historyLength : 0.5)),
+        Points:        fi(Math.max(2, Number.isFinite(points) ? Math.round(points) : 256)),
+        Width:         fd(Math.max(0.5, Number.isFinite(width) ? width : 4)),
+        Color:         fd(colorArr(color)),
+        UVScale:       fd([1, 1]),
+      },
+      Materials: fd([]),
+    },
   };
 }
 
@@ -2728,6 +2902,17 @@ function buildComponent(c: UixComponent, rtId?: string) {
     // builds the proper hierarchy. Emit a placeholder typed as ScrollRect.
     return { Type: typeIndex("ScrollRect"), Data: data };
   }
+  if (c.type === "Waveform") {
+    // Fallback only — serializeSlot intercepts Waveform markers (hasWaveform)
+    // and builds the RectMesh + cast itself. Placeholder so the dispatch resolves.
+    return { Type: typeIndex("RectMeshAudioWaveform"), Data: data };
+  }
+  if (c.type === "UserProfile") {
+    // Editor-only marker — always skipped by the serializeSlot component loops
+    // (its Card Image + Avatar + Name children export normally). Defensive
+    // placeholder so the dispatch resolves if it ever slips through.
+    return { Type: typeIndex("ValueFieldInt"), Data: data };
+  }
   return { Type: typeIndex(c.type), Data: data };
 }
 
@@ -2773,6 +2958,22 @@ let _valueWrapperLabel: Map<string, string> = new Map();
 // wrapper finishes serializing its descendants (the marker, which produces the
 // source field, is a descendant serialized DURING the wrapper's children map).
 let _pendingValueSlots: Map<string, ValueExport[]> = new Map();
+
+// Cross-element "🔗 Links" registries. A *source* is recorded when the driving
+// control serializes (a ColorPicker's swatch Tint, a Slider's Value); a *target*
+// when the driven element serializes (a ProgressBar's Fill Tint, a numeric
+// field's parsed value). After the whole tree is built, matched (by link id)
+// pairs become ValueCopy components parked in one "🔗 Links" data slot under the
+// canvas. ValueCopy references fields by global ID, so the host slot is irrelevant.
+let _colorLinkSources: Map<string, string> = new Map();              // linkId → picker swatch Tint field id
+let _colorLinkTargets: Array<{ linkId: string; targetTintFieldId: string }> = [];
+let _sliderLinkSources: Map<string, string> = new Map();            // linkId → slider Value field id
+let _sliderLinkTargets: Array<{ linkId: string; parsedFieldId: string }> = [];
+// Audio-source reference links: a ReferenceField (source) feeds a Waveform's
+// ReferenceCast.Source (target). Emitted as ReferenceCopy<IWorldElement> in the
+// "🔗 Links" pass.
+let _audioRefSources: Map<string, string> = new Map();              // audioLinkId → ReferenceField.Reference field id
+let _audioRefTargets: Array<{ linkId: string; castSourceFieldId: string }> = [];
 
 function hasLabelChild(slot: Slot): boolean {
   return slot.children.some((ch) => ch.name === "Label" && ch.components.some((c) => c.type === "Text"));
@@ -3071,6 +3272,13 @@ function buildProgressBarSlot(
     type: "Image",
     props: { tint: pbFill, preserveAspect: false, spriteUrl: "", cornerRadius: 100 },
   });
+  // Cross-element link target: a ColorPicker whose linkId matches drives this
+  // bar's fill color. Capture the Fill Image's Tint field id for the ValueCopy.
+  const pbColorLinkId = (pp.colorLinkId as string | undefined) ?? "";
+  if (pbColorLinkId) {
+    const pbFillTintFieldId = ((pbFillImageBuilt.Data as Record<string, unknown>).Tint as { ID: string }).ID;
+    _colorLinkTargets.push({ linkId: pbColorLinkId, targetTintFieldId: pbFillTintFieldId });
+  }
   // Fill-side constant: value = 1, feeds the "fixed" axis of the float2.
   const pbFillConstVf = compValueFieldFloat(1);
 
@@ -3220,9 +3428,10 @@ function buildTextFieldSlot(
   // parser's ParsedValue field (a real float/int IField), not the raw
   // Text.Content string. Plain text fields expose the string content.
   const fieldType = (tfp.fieldType as string) ?? "text";
+  const decimalPlaces = typeof tfp.decimalPlaces === "number" ? (tfp.decimalPlaces as number) : 2;
   let tfValueExport: ValueExport;
   if (fieldType === "float") {
-    const parser = compFloatTextEditorParser();
+    const parser = compFloatTextEditorParser(decimalPlaces);
     ordered.push({ Type: typeIndex("FloatTextEditorParser"), Data: parser });
     const parsed = parseFloat(textContent);
     tfValueExport = {
@@ -3241,6 +3450,15 @@ function buildTextFieldSlot(
     };
   } else {
     tfValueExport = { kind: "string", sourceFieldId: tfContentFieldId, initial: textContent };
+  }
+
+  // Cross-element link target: a numeric field can two-way-bind to the Slider
+  // whose linkId matches `bindSliderId`. The parser's ParsedValue (exposed above
+  // as the source field) is what the ValueCopy<float> drives, with WriteBack so
+  // typing also moves the slider. See the "🔗 Links" pass.
+  const tfBindSliderId = (tfp.bindSliderId as string | undefined) ?? "";
+  if (tfBindSliderId && (fieldType === "float" || fieldType === "int")) {
+    _sliderLinkTargets.push({ linkId: tfBindSliderId, parsedFieldId: tfValueExport.sourceFieldId });
   }
 
   for (const c of slot.components) {
@@ -3513,6 +3731,10 @@ function buildSliderSlot(
   const sliderValueFieldId = (
     (sliderBuilt.Data as Record<string, unknown>).Value as { ID: string }
   ).ID;
+  // Cross-element link source: a float field whose bindSliderId matches this
+  // slider's linkId two-way-binds to this Value. See the "🔗 Links" pass.
+  const slLinkId = (sp.linkId as string | undefined) ?? "";
+  if (slLinkId) _sliderLinkSources.set(slLinkId, sliderValueFieldId);
 
   // Order on the Slider slot: RT, Image (if user authored one), Slider,
   // then any other user-authored components (LayoutElement, etc.). The
@@ -3831,6 +4053,253 @@ function buildTabButtonSlot(
   return { components: out };
 }
 
+// Waveform slot — an audio waveform visualizer. The host slot becomes a
+// UIX.RectMesh<AudioSourceWaveformMesh> (procedural live-waveform graphic) plus a
+// ReferenceCast<IWorldElement, IWorldAudioDataSource> that downcasts the dropped
+// "Audio source" reference and drives the mesh's Mesh.Source. The cast's Source
+// is fed by a ReferenceCopy emitted in the "🔗 Links" pass (from the matching
+// ReferenceField). Modeled on UIX Template/AudioStreamController.
+function buildWaveformSlot(
+  slot: Slot,
+  rtComp: UixComponent,
+  waveformComp: UixComponent,
+): { components: BuiltComp[] } {
+  const wp = waveformComp.props as Record<string, unknown>;
+  const color = (wp.color as { r: number; g: number; b: number; a: number }) ?? { r: 0.88, g: 0.88, b: 0.88, a: 1 };
+  const points = (wp.points as number) ?? 256;
+  const thickness = (wp.thickness as number) ?? 4;
+  const historyLength = (wp.historyLength as number) ?? 0.5;
+  const audioLinkId = (wp.audioLinkId as string | undefined) ?? "";
+
+  const mesh = compRectMeshWaveform(color, points, thickness, historyLength);
+  // ReferenceCast: its Source is driven (by the link's ReferenceCopy) and it
+  // drives Target = the mesh's audio Source field.
+  const castSourceFieldId = nextId();
+  const castData: Record<string, unknown> = {
+    ...baseComp(),
+    Source: { ID: castSourceFieldId, Data: null },
+    Target: fd(mesh.sourceFieldId),
+    WriteBack: fd(false),
+  };
+  if (audioLinkId) _audioRefTargets.push({ linkId: audioLinkId, castSourceFieldId });
+
+  const ordered: BuiltComp[] = [];
+  ordered.push(buildComponent(rtComp));
+  ordered.push({ Type: typeIndex("RectMeshAudioWaveform"),       Data: mesh.data });
+  ordered.push({ Type: typeIndex("ReferenceCastElementToAudio"), Data: castData });
+  // Pass through any other authored components (LayoutElement, etc.). Skip the
+  // marker, the RT (already added), and any Image — the mesh is the sole graphic
+  // on this slot (one graphic per slot, else Z-fighting).
+  for (const c of slot.components) {
+    if (c === rtComp || c === waveformComp || c.type === "Image") continue;
+    ordered.push(buildComponent(c));
+  }
+  return { components: ordered };
+}
+
+// One ProtoFlux node = a slot carrying its binding component(s). The binding
+// component's ID is the node's identity (other nodes reference it). Shape mirrors
+// any data slot (no RectTransform — flux nodes are pure logic).
+function fluxNodeSlot(name: string, parentId: string, comps: BuiltComp[]): Record<string, unknown> {
+  return {
+    ID: nextId(),
+    Components: { ID: nextId(), Data: comps },
+    Name:           { ID: nextId(), Data: name },
+    Tag:            { ID: nextId(), Data: null },
+    Active:         { ID: nextId(), Data: true },
+    "Persistent-ID": nextId(),
+    Position:       { ID: nextId(), Data: vec3(0, 0, 0) },
+    Rotation:       { ID: nextId(), Data: vec4(0, 0, 0, 1) },
+    Scale:          { ID: nextId(), Data: vec3(1, 1, 1) },
+    OrderOffset:    { ID: nextId(), Data: Long.fromNumber(0) },
+    ParentReference: parentId,
+    Children: [],
+  };
+}
+
+// Build the "Flux" logic subtree for a User Profile's "Take ownership" button.
+// One-shot capture: a DynamicImpulseReceiver (matching the button's tag) fires →
+// LocalUser → UserUserID → ObjectWrite<string> writes the pressing user's id into
+// CloudUserInfo.UserId. Because it's a one-shot WRITE (not a continuous drive) the
+// id persists and replicates, so everyone sees the same (owner's) profile.
+//
+// VR-PENDING / EMITTED BLIND: DynamicImpulseReceiver, ObjectWrite<string> (its flow
+// trigger + target-field wiring) and the receiver→write flow link appear in NO
+// reference export. Type strings are best-recall; ObjectWrite's target uses the
+// string FieldDrive proxy shape as a stand-in. Capture a working button→flux export
+// in-headset and reconcile this against it.
+function buildUserProfileFlux(
+  profileSlotId: string,
+  userIdFieldId: string,
+  tag: string,
+): Record<string, unknown> {
+  const fluxId = nextId();
+  // DynamicImpulseReceiver(Tag) — fires when the button broadcasts the same tag.
+  const recvBindId = nextId();
+  const recvNode = fluxNodeSlot("Receive Take Ownership", fluxId, [
+    { Type: typeIndex("PFDynamicImpulseReceiver"), Data: { ID: recvBindId, "persistent-ID": nextId(), UpdateOrder: fi(0), Enabled: fd(true), Tag: fd(tag) } },
+  ]);
+  // LocalUser — produces the local (pressing) User.
+  const luBindId = nextId();
+  const luNode = fluxNodeSlot("LocalUser", fluxId, [
+    { Type: typeIndex("PFLocalUser"), Data: { ID: luBindId, "persistent-ID": nextId(), UpdateOrder: fi(0), Enabled: fd(true) } },
+  ]);
+  // UserUserID(User=LocalUser) — the local user's id string.
+  const idBindId = nextId();
+  const idNode = fluxNodeSlot("LocalUserID", fluxId, [
+    { Type: typeIndex("PFUserUserID"), Data: { ID: idBindId, "persistent-ID": nextId(), UpdateOrder: fi(0), Enabled: fd(true), User: fd(luBindId) } },
+  ]);
+  // ObjectWrite<string> — on the receiver's impulse, writes UserUserID into the
+  // CloudUserInfo.UserId field. `Write` carries the flow from the receiver; the
+  // +Proxy names the target field (best-guess, mirrors the FieldDrive proxy).
+  const wBindId = nextId();
+  const wNode = fluxNodeSlot("Write UserId", fluxId, [
+    { Type: typeIndex("PFObjectWriteString"), Data: { ID: wBindId, "persistent-ID": nextId(), UpdateOrder: fi(0), Enabled: fd(true), Value: fd(idBindId), Write: fd(recvBindId) } },
+    { Type: typeIndex("PFFieldDriveBaseStringProxy"), Data: { ...baseComp(), Node: fd(wBindId), Path: fd([]), Drive: fd(userIdFieldId) } },
+  ]);
+  return {
+    ID: fluxId,
+    Components: { ID: nextId(), Data: [] },
+    Name:           { ID: nextId(), Data: "Flux" },
+    Tag:            { ID: nextId(), Data: "uixstudio-flux" },
+    Active:         { ID: nextId(), Data: true },
+    "Persistent-ID": nextId(),
+    Position:       { ID: nextId(), Data: vec3(0, 0, 0) },
+    Rotation:       { ID: nextId(), Data: vec4(0, 0, 0, 1) },
+    Scale:          { ID: nextId(), Data: vec3(1, 1, 1) },
+    OrderOffset:    { ID: nextId(), Data: Long.fromNumber(0) },
+    ParentReference: profileSlotId,
+    Children: [recvNode, luNode, idNode, wNode],
+  };
+}
+
+// Locate a built component on a self-serialized child slot whose Data carries the
+// given field key (e.g. the Avatar's Image via "Sprite", the Name's Text via
+// "Content"). Returns the component's Data object (mutable) or null.
+function findChildComp(
+  serializedChild: Record<string, unknown> | undefined,
+  fieldKey: string,
+): Record<string, unknown> | null {
+  const comps = ((serializedChild?.Components as { Data?: Array<{ Data: Record<string, unknown> }> } | undefined)?.Data) ?? [];
+  for (const c of comps) {
+    if (c.Data && Object.prototype.hasOwnProperty.call(c.Data, fieldKey)) return c.Data;
+  }
+  return null;
+}
+
+// User Profile slot — a member card (Card Image + Avatar + Name). The marker is
+// skipped; the children export normally. We serialize the children HERE so we can:
+//   1. drive the Avatar Image.Sprite from CloudUserInfo.IconURL (profile picture)
+//      via a per-card StaticTexture2D + SpriteProvider + ValueCopy<Uri>;
+//   2. drive the Name Text.Content from CloudUserInfo.Username via ValueCopy<string>;
+//   3. expose the username as a "📊 Value" slot (our value-slot standard);
+//   4. attach a "Flux" logic slot for the one-shot "Take ownership" write.
+// CloudUserInfo.UserId starts EMPTY — nothing shows until "Take ownership" is pressed.
+function buildUserProfileSlot(
+  slot: Slot,
+  rtComp: UixComponent,
+  imageComp: UixComponent | undefined,
+  userProfileComp: UixComponent,
+  slotId: string,
+): { components: BuiltComp[]; children: Record<string, unknown>[] } {
+  // CloudUserInfo lives on the card (wrapper) slot. UserId empty until take-ownership.
+  const cui = compCloudUserInfo("");
+
+  const components: BuiltComp[] = [];
+  components.push(buildComponent(rtComp));
+  if (imageComp) components.push(buildComponent(imageComp));
+  for (const c of slot.components) {
+    if (c === rtComp || c === imageComp || c === userProfileComp) continue;
+    components.push(buildComponent(c));
+  }
+  components.push({ Type: typeIndex("CloudUserInfo"), Data: cui.data });
+
+  // Serialize the authored children ourselves (suppressing the normal mapping).
+  const serializedChildren = slot.children.map(
+    (ch, idx) => serializeSlot(ch, slotId, idx) as Record<string, unknown>,
+  );
+  const byName = (n: string) =>
+    serializedChildren.find((s) => (s.Name as { Data?: string } | undefined)?.Data === n);
+
+  // (1) Avatar — circular live profile picture. The avatar's own pill Image
+  //     STAYS the visible circle and doubles as a stencil (UIX.Mask with
+  //     ShowMaskGraphic=true — same VR-confirmed pattern as the Reference Field
+  //     pill); the CloudUserInfo-driven picture lives on a nested "Picture"
+  //     child clipped by it. (Re-pointing the pill's own Sprite at the profile
+  //     texture — the old approach — REPLACED the circle sprite, so the fetched
+  //     avatar rendered SQUARE in-game while the editor preview showed a circle.)
+  const avatarSlot = byName("Avatar");
+  const avatarImg = findChildComp(avatarSlot, "Sprite");
+  if (!avatarImg) {
+    // Wiring keys off the child slot NAME — a renamed/deleted "Avatar" child
+    // exports fine but the profile picture stays blank. Surface it.
+    console.warn(`UserProfile "${slot.name}": no "Avatar" child with an Image found — avatar won't be driven by CloudUserInfo.`);
+  }
+  if (avatarSlot && avatarImg) {
+    const avatarComps = (avatarSlot.Components as { Data: BuiltComp[] }).Data;
+    avatarComps.push({ Type: typeIndex("Mask"), Data: compMask(true) });
+
+    const tex = compStaticTexture2D(""); // URL empty → driven by the ValueCopy below
+    const texUrlFieldId = (tex.URL as { ID: string }).ID;
+    const sp = compSpriteProvider(tex.ID as string, [0, 0, 0, 0]); // no 9-slice — full image
+    const pictureRt = buildComponent({
+      type: "RectTransform",
+      props: {
+        anchorMin: { x: 0, y: 0 }, anchorMax: { x: 1, y: 1 },
+        offsetMin: { x: 0, y: 0 }, offsetMax: { x: 0, y: 0 },
+        pivot: { x: 0.5, y: 0.5 },
+      },
+    });
+    const pictureImg = compImage({ tint: { r: 1, g: 1, b: 1, a: 1 }, preserveAspect: true, spriteUrl: "" });
+    (pictureImg.Sprite as { Data: unknown }).Data = sp.ID as string;
+    (avatarSlot.Children as unknown[]).push({
+      ID: nextId(),
+      Components: { ID: nextId(), Data: [
+        pictureRt,
+        { Type: typeIndex("Image"),           Data: pictureImg },
+        { Type: typeIndex("StaticTexture2D"), Data: tex },
+        { Type: typeIndex("SpriteProvider"),  Data: sp },
+        { Type: typeIndex("ValueCopyUri"),    Data: compValueCopy(cui.iconUrlFieldId, texUrlFieldId, false) },
+      ] },
+      Name:           { ID: nextId(), Data: "Picture" },
+      Tag:            { ID: nextId(), Data: null },
+      Active:         { ID: nextId(), Data: true },
+      "Persistent-ID": nextId(),
+      Position:       { ID: nextId(), Data: vec3(0, 0, 0) },
+      Rotation:       { ID: nextId(), Data: vec4(0, 0, 0, 1) },
+      Scale:          { ID: nextId(), Data: vec3(1, 1, 1) },
+      OrderOffset:    { ID: nextId(), Data: Long.fromNumber(0) },
+      ParentReference: avatarSlot.ID as string,
+      Children: [],
+    });
+  }
+
+  // (2) Name — drive its Text.Content from CloudUserInfo.Username.
+  const nameText = findChildComp(byName("Name"), "Content");
+  if (!nameText) {
+    console.warn(`UserProfile "${slot.name}": no "Name" child with a Text found — username won't be driven by CloudUserInfo.`);
+  }
+  if (nameText) {
+    const nameContentFieldId = (nameText.Content as { ID: string }).ID;
+    const nameComps = (byName("Name")!.Components as { Data: BuiltComp[] }).Data;
+    nameComps.push({ Type: typeIndex("ValueCopyString"), Data: compValueCopy(cui.usernameFieldId, nameContentFieldId, false) });
+  }
+
+  const children = [...serializedChildren];
+
+  // (3) "📊 Value" slot exposing the username (matches the toggle/control standard).
+  children.push(buildValueSlot(slotId, slot.name || "User", {
+    kind: "string",
+    sourceFieldId: cui.usernameFieldId,
+    initial: "",
+  }));
+
+  // (4) "Flux" logic slot — one-shot "Take ownership" write (see buildUserProfileFlux).
+  children.push(buildUserProfileFlux(slotId, cui.userIdFieldId, takeOwnershipTag(slot.id)));
+
+  return { components, children };
+}
+
 // ReferenceField widget — RefEditor pattern (verified against the "Text to
 // String with Reference Field" example). See inline body for the full wiring.
 // Extracted verbatim from serializeSlot (T4-C1).
@@ -3978,6 +4447,11 @@ function buildReferenceFieldSlot(
       //    Field Button's ButtonRelay and for the Inspector Button's Pressed
       //    event target.
       const refField = compReferenceFieldIWorldElement();
+      // Cross-element link source: a Waveform whose audioLinkId matches reads the
+      // object dropped into this field (wired by a ReferenceCopy in the "🔗 Links"
+      // pass). The stored reference IS refField.referenceFieldId.
+      const rfAudioLinkId = ((referenceFieldComp?.props as Record<string, unknown> | undefined)?.audioLinkId as string | undefined) ?? "";
+      if (rfAudioLinkId) _audioRefSources.set(rfAudioLinkId, refField.referenceFieldId);
       const refEditorData = compRefEditor(
         refField.referenceFieldId,
         fieldTextContentFieldId,
@@ -4729,15 +5203,16 @@ function buildScrollAreaSlot(
           const bgSlot = findPrebuiltSlotByName(emitted.scrollbar, "Background");
           if (bgSlot) {
             const bgImg = prebuiltCompDataWithField(bgSlot, "Tint");
-            // Overdrive both corners beyond half-width so Resonite renders the
-            // fullest possible pill caps. Track: 8px (half-width = 6). Thumb: 6px
-            // (half-width = 4). Overdriving pushes caps to the edge of the element
-            // and gives a visually complete pill at the ends.
-            if (bgImg) injectRoundedSprite(bgSlot, bgImg, 8);
+            // The rendered corner is Borders×FixedSize = HALF the FixedSize, so a
+            // full pill cap needs FixedSize = the element's full width. Track:
+            // 12 (width 12 → 6px caps). Thumb: 8 (width 8 → 4px caps). The old
+            // 8/6 values assumed FixedSize was the radius itself and rendered
+            // visibly under-rounded 4px/3px caps.
+            if (bgImg) injectRoundedSprite(bgSlot, bgImg, 12);
             const handelSlot = findPrebuiltSlotByName(bgSlot, "Handel");
             if (handelSlot) {
               const handelImg = prebuiltCompDataWithField(handelSlot, "Tint");
-              if (handelImg) injectRoundedSprite(handelSlot, handelImg, 6);
+              if (handelImg) injectRoundedSprite(handelSlot, handelImg, 8);
             }
           }
         }
@@ -4876,6 +5351,10 @@ function buildColorPickerSlot(
     props: { ...(imageComp.props as Record<string, unknown>), tint: initial },
   });
   const tintFieldId = ((imageBuilt.Data as Record<string, unknown>).Tint as { ID: string }).ID;
+  // Cross-element link source: this picker's chosen color (its swatch Tint) can
+  // drive a ProgressBar whose colorLinkId matches. See the "🔗 Links" pass.
+  const cpLinkId = (props.linkId as string | undefined) ?? "";
+  if (cpLinkId) _colorLinkSources.set(cpLinkId, tintFieldId);
 
   const buttonBuilt: BuiltComp = {
     Type: typeIndex("Button"),
@@ -4893,7 +5372,7 @@ function buildColorPickerSlot(
   // editor-only markers have no FrooxEngine counterpart — skip them.
   for (const c of slot.components) {
     if (c === rtComp || c === imageComp || c === buttonComp || c === colorPickerComp) continue;
-    if (c.type === "Close" || c.type === "Popup" || c.type === "Spacer") continue;
+    if (c.type === "Close" || c.type === "Popup" || c.type === "Spacer" || c.type === "UserProfile") continue;
     if (c.type === "PopupContent" || c.type === "PopupDismiss") continue;
     ordered.push(buildComponent(c));
   }
@@ -4974,6 +5453,12 @@ function serializeSlot(
   // Suppress the default Children-mapper when ScrollArea is consuming them —
   // the user's children get nested into the synthetic Content slot instead.
   let scrollAreaSuppressChildren = false;
+
+  // User Profile: we serialize its children ourselves (to read the Name text's
+  // Content field id for the username flux), so suppress the default mapping and
+  // emit the pre-built list (children + the "Flux" subtree).
+  let preBuiltUserProfileChildren: Record<string, unknown>[] | null = null;
+  let userProfileSuppressChildren = false;
 
   // When set by an interactive branch below, a "📚 Value" child slot exposing
   // this control's value is appended in the Children-assembly step.
@@ -5138,6 +5623,8 @@ function serializeSlot(
     const referenceFieldComp = slot.components.find((c) => c.type === "ReferenceField");
     const scrollAreaComp = slot.components.find((c) => c.type === "ScrollArea");
     const colorPickerComp = slot.components.find((c) => c.type === "ColorPicker");
+    const waveformComp = slot.components.find((c) => c.type === "Waveform");
+    const userProfileComp = slot.components.find((c) => c.type === "UserProfile");
     const markerComp   = checkboxComp ?? toggleComp;
     // Spinner slot detection — an Image with `useSpinnerIcon: true` is
     // expanded into a procedural UIX.OutlinedArc + drivers + ProtoFlux
@@ -5156,6 +5643,8 @@ function serializeSlot(
     const hasRadio = !!radioComp && !!rtComp && !!imageComp;
     const hasDropdown = !!dropdownComp && !!rtComp && !!imageComp && !!buttonComp;
     const hasReferenceField = !!referenceFieldComp && !!rtComp;
+    const hasWaveform = !!waveformComp && !!rtComp;
+    const hasUserProfile = !!userProfileComp && !!rtComp;
     const hasScrollArea = !!scrollAreaComp && !!rtComp;
     const tabsComp = slot.components.find((c) => c.type === "Tabs");
     const tabButtonComp = slot.components.find((c) => c.type === "TabButton");
@@ -5261,6 +5750,20 @@ function serializeSlot(
       const cpResult = buildColorPickerSlot(slot, rtComp, imageComp!, buttonComp!, colorPickerComp!);
       components = cpResult.components;
       valueExport = cpResult.valueExport;
+    } else if (hasWaveform) {
+      // Waveform slot — see buildWaveformSlot. RectMesh<AudioSourceWaveformMesh>
+      // + ReferenceCast; the cast's Source is fed by a ReferenceCopy in the
+      // "🔗 Links" pass (from the matching "Audio source" ReferenceField).
+      const wfResult = buildWaveformSlot(slot, rtComp!, waveformComp!);
+      components = wfResult.components;
+    } else if (hasUserProfile) {
+      // User Profile card — see buildUserProfileSlot. Card Image + (self-serialized)
+      // Avatar/Name children + a ProtoFlux "Flux" subtree driving the Name text
+      // to the local user's username.
+      const upResult = buildUserProfileSlot(slot, rtComp!, imageComp, userProfileComp!, slotId);
+      components = upResult.components;
+      preBuiltUserProfileChildren = upResult.children;
+      userProfileSuppressChildren = true;
     } else if (hasButtonFeedback) {
       // Build Image first to capture its Tint field ID, then build everything
       // else preserving original order. Replace the Button slot with a driver-
@@ -5470,6 +5973,24 @@ function serializeSlot(
     });
   }
 
+  // "Take ownership" button → ButtonDynamicImpulseTrigger. A Button whose props
+  // carry `takeOwnershipLinkId` (the EDITOR id of a UserProfile) broadcasts that
+  // profile's tag on press; the profile's "Flux" DynamicImpulseReceiver catches it
+  // and writes the pressing user's id into CloudUserInfo.UserId. Target = the root
+  // grabbable so the impulse reaches the receiver anywhere in the panel.
+  // VR-PENDING / BLIND — see compButtonDynamicImpulseTrigger.
+  const takeOwnerBtn = slot.components.find(
+    (c) => c.type === "Button" && typeof (c.props as { takeOwnershipLinkId?: string }).takeOwnershipLinkId === "string"
+      && ((c.props as { takeOwnershipLinkId?: string }).takeOwnershipLinkId ?? "").length > 0,
+  );
+  if (takeOwnerBtn) {
+    const linkId = (takeOwnerBtn.props as { takeOwnershipLinkId: string }).takeOwnershipLinkId;
+    components.push({
+      Type: typeIndex("ButtonDynamicImpulseTrigger"),
+      Data: compButtonDynamicImpulseTrigger(_rootWrapperId || slotId, takeOwnershipTag(linkId)),
+    });
+  }
+
   // Popup → ButtonToggle on the host slot. The toggle's TargetValue points
   // at the pre-allocated Active-field UUID for this slot's modal; clicking
   // flips Active false→true and the modal subtree (built in buildRootWrapper)
@@ -5518,7 +6039,9 @@ function serializeSlot(
       // ScrollArea reparents the user's children into the synthetic Content
       // slot during its branch above — skip the default mapping in that case
       // to avoid emitting them twice.
-      const out = scrollAreaSuppressChildren
+      const out = userProfileSuppressChildren
+        ? [...(preBuiltUserProfileChildren ?? [])]
+        : scrollAreaSuppressChildren
         ? []
         : slot.children.map((child, idx) => {
             if (idx === preBuiltKnobIdx && preBuiltKnob) return preBuiltKnob;
@@ -6829,6 +7352,7 @@ function buildContainerStack(
 
 function buildRootWrapper(canvasSlot: Slot): Record<string, unknown> {
   const rootId = nextId();
+  _rootWrapperId = rootId; // expose for cross-slot impulse targeting (Take ownership)
   const compListId = nextId();
   // PopupContent cards are direct Canvas children but must NOT render inline —
   // they're lowered into the Active=false modal sub-tree below. Strip them from
@@ -6965,6 +7489,49 @@ function buildRootWrapper(canvasSlot: Slot): Record<string, unknown> {
       Children: dropdownModals,
     });
   }
+  // Cross-element links — emit one ValueCopy per matched (source, target) pair
+  // into a single component-only "🔗 Links" data slot (no RectTransform, like the
+  // "📚 Value" slots). Color: picker swatch Tint → bar Fill Tint (one-way).
+  // Slider↔float: slider Value ↔ numeric field's parsed value (WriteBack two-way
+  // — dragging the slider updates the number; typing moves the slider). Unmatched
+  // ids are skipped silently.
+  {
+    const linkComps: BuiltComp[] = [];
+    for (const tgt of _colorLinkTargets) {
+      const src = _colorLinkSources.get(tgt.linkId);
+      if (!src) continue;
+      linkComps.push({ Type: typeIndex("ValueCopyColorX"), Data: compValueCopy(src, tgt.targetTintFieldId, false) });
+    }
+    for (const tgt of _sliderLinkTargets) {
+      const src = _sliderLinkSources.get(tgt.linkId);
+      if (!src) continue;
+      linkComps.push({ Type: typeIndex("ValueCopyFloat"), Data: compValueCopy(src, tgt.parsedFieldId, true) });
+    }
+    // Audio-source reference links: a ReferenceField's stored reference →
+    // a Waveform's ReferenceCast.Source (one-way), so the dropped audio source
+    // feeds the waveform mesh.
+    for (const tgt of _audioRefTargets) {
+      const src = _audioRefSources.get(tgt.linkId);
+      if (!src) continue;
+      linkComps.push({ Type: typeIndex("ReferenceCopyIWorldElement"), Data: compReferenceCopy(src, tgt.castSourceFieldId, false) });
+    }
+    if (linkComps.length > 0) {
+      canvasChildren.push({
+        ID: nextId(),
+        Components: { ID: nextId(), Data: linkComps },
+        Name:           { ID: nextId(), Data: "🔗 Links" },
+        Tag:            { ID: nextId(), Data: "uixstudio-links" },
+        Active:         { ID: nextId(), Data: true },
+        "Persistent-ID": nextId(),
+        Position:       { ID: nextId(), Data: vec3(0, 0, 0) },
+        Rotation:       { ID: nextId(), Data: vec4(0, 0, 0, 1) },
+        Scale:          { ID: nextId(), Data: vec3(1, 1, 1) },
+        OrderOffset:    { ID: nextId(), Data: Long.fromNumber(0) },
+        ParentReference: canvasId,
+        Children: [],
+      });
+    }
+  }
   // serializeSlot already numbered the canvas's user children 1..N; the popup /
   // dropdown overlay containers were pushed afterward, so renumber the full
   // array to give those containers the highest OrderOffsets — keeping modals
@@ -7077,10 +7644,23 @@ export async function exportBrsonFile(
   _valueWrapperOf = new Map();
   _valueWrapperLabel = new Map();
   _pendingValueSlots = new Map();
+  // Cross-slot wiring state (🔗 Links pass + Take-ownership impulse targeting).
+  // _rootWrapperId is re-assigned by buildRootWrapper before any serializeSlot
+  // runs, but reset it anyway: the `_rootWrapperId || slotId` fallback in
+  // serializeSlot would silently mask a future ordering regression otherwise.
+  _rootWrapperId = "";
+  _colorLinkSources = new Map();
+  _colorLinkTargets = [];
+  _sliderLinkSources = new Map();
+  _sliderLinkTargets = [];
+  _audioRefSources = new Map();
+  _audioRefTargets = [];
   computeSlotRectSizes(doc.root);
   // Panel corner FixedSize for `matchPanelCorners` Images (see decl). Mirrors the
-  // intermediate-cornerRadius lowering in compImage: FixedSize = (cr/100)·min/2,
-  // derived from the Front Backing's cornerRadius and the canvas dimensions.
+  // intermediate-cornerRadius lowering in compImage: FixedSize = (cr/100)·min —
+  // twice the on-screen radius (the corner renders at Borders×FixedSize = half) —
+  // derived from the Front Backing's cornerRadius and the canvas dimensions. The
+  // preview mirror (renderSlot panelCornerPxOf) computes the RADIUS, i.e. half this.
   _panelCornerFixedSizePx = (() => {
     const { frontBacking } = findBackgroundSlots(doc.root);
     const cr = (frontBacking?.components.find((c) => c.type === "Image")?.props as { cornerRadius?: number } | undefined)?.cornerRadius;
@@ -7088,7 +7668,7 @@ export async function exportBrsonFile(
     const cc = doc.root.components.find((c) => c.type === "Canvas");
     const cw = (cc?.props as { sizeX?: number } | undefined)?.sizeX ?? 800;
     const ch = (cc?.props as { sizeY?: number } | undefined)?.sizeY ?? 600;
-    return (Math.min(100, cr) / 100) * (Math.min(cw, ch) / 2);
+    return (Math.min(100, cr) / 100) * Math.min(cw, ch);
   })();
   computeValueSlotWrappers(doc.root);
 

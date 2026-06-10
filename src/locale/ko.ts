@@ -318,6 +318,13 @@ export const ko: Dictionary = {
     labelTop: "▤ 위",
     labelLeftHint: "컨트롤 왼쪽에 라벨",
     labelTopHint: "컨트롤 위에 라벨",
+    direction: "방향",
+    directionHorizontal: "↔ 가로",
+    directionVertical: "↕ 세로",
+    avatarPosition: "아바타 위치",
+    avatarLeft: "◧ 왼쪽",
+    avatarAbove: "▲ 위",
+    avatarRight: "오른쪽 ◨",
     managedByLayout: "레이아웃이 관리함",
   },
 

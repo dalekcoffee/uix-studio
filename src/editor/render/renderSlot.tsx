@@ -16,8 +16,10 @@ import { measureTextWidth } from "../textMeasure";
 import { imageHasSprite } from "../../model/imageSprite";
 
 // Panel corner radius in canvas px — what a `matchPanelCorners` Image (e.g. the
-// header bar) rounds to, mirroring _panelCornerFixedSizePx at export:
-// (Front Backing cornerRadius / 100) × min(canvasW, canvasH) / 2. Every rendered
+// header bar) rounds to: (Front Backing cornerRadius / 100) × min(canvasW,
+// canvasH) / 2. This is the on-screen RADIUS — the export's
+// _panelCornerFixedSizePx is twice this (corners render at half the
+// SpriteProvider FixedSize), so the two stay in lockstep. Every rendered
 // slot needs this, but it depends ONLY on the root, so memoize by root identity:
 // the findBackgroundSlots tree-walk runs once per tree instead of once per slot
 // on every unrelated store change (selection, viewport, drag…).
@@ -72,8 +74,8 @@ export function RenderedSlot({ slot, rect, isRoot }: Props) {
   // image (mirrors the opaque PNG the exporter bakes).
   const themeBackground = useStore((s) => s.theme.background);
   // Panel corner radius in canvas px — what an `matchPanelCorners` Image (e.g.
-  // the header bar) rounds to, mirroring _panelCornerFixedSizePx at export:
-  // (Front Backing cornerRadius / 100) × min(canvasW, canvasH) / 2.
+  // the header bar) rounds to: (Front Backing cornerRadius / 100) ×
+  // min(canvasW, canvasH) / 2 — half the export's _panelCornerFixedSizePx.
   const panelCornerPx = useStore((s) => panelCornerPxOf(s.root));
   // Canvas.contentPadding — nested container padding left on the -1 "auto"
   // sentinel inherits half of this (resolved inside layoutChildren).
@@ -105,6 +107,7 @@ export function RenderedSlot({ slot, rect, isRoot }: Props) {
   const referenceField = getComponent(slot, "ReferenceField");
   const scrollArea = getComponent(slot, "ScrollArea");
   const colorPicker = getComponent(slot, "ColorPicker");
+  const waveform = getComponent(slot, "Waveform");
   const spacer = getComponent(slot, "Spacer");
   // Tabs host: show only the page at `activeTab`. The page index is positional
   // among the host's TabPage children (matching the exporter's per-page
@@ -450,9 +453,10 @@ export function RenderedSlot({ slot, rect, isRoot }: Props) {
         </span>
       )}
       {text && <TextPreview props={text.props as any} rect={rect} />}
-      {textField && <TextFieldPreview props={textField.props as any} />}
+      {textField && <TextFieldPreview props={textField.props as any} radius={typeof style.borderRadius === "number" ? style.borderRadius : 0} />}
       {slider && <SliderFillPreview props={slider.props as any} rect={rect} trackRadius={typeof style.borderRadius === "number" ? style.borderRadius : 0} />}
       {progressBar && <ProgressBarFillPreview props={progressBar.props as any} trackRadius={typeof style.borderRadius === "number" ? style.borderRadius : 0} />}
+      {waveform && <WaveformPreview props={waveform.props as any} />}
       {dropdown && <DropdownLabelPreview props={dropdown.props as any} />}
       {radio && <RadioDotPreview props={radio.props as any} />}
       {referenceField && <ReferenceFieldPreview props={referenceField.props as any} />}
@@ -881,6 +885,50 @@ function ProgressBarFillPreview({
   return <div style={fillStyle} />;
 }
 
+// Waveform preview — a stylized audio trace so the Output area reads as a
+// visualizer in the editor. The real export is a UIX.RectMesh<AudioSourceWaveformMesh>
+// that draws the LIVE waveform of the linked audio source in Resonite; here we
+// draw a static representative trace tinted with the authored color.
+function WaveformPreview({ props }: { props: any }) {
+  const stroke = colorToCss(props?.color ?? { r: 0.88, g: 0.88, b: 0.88, a: 1 });
+  const thickness = Math.max(1, Number(props?.thickness ?? 4) * 0.5);
+  // A representative trace: a few summed sine harmonics sampled across the width,
+  // mirrored top/bottom about the centerline like the in-game waveform.
+  const N = 96;
+  const pts: string[] = [];
+  for (let i = 0; i <= N; i++) {
+    const x = (i / N) * 100;
+    const t = (i / N) * Math.PI * 2;
+    const a =
+      Math.sin(t * 3) * 0.55 +
+      Math.sin(t * 7 + 1.3) * 0.25 +
+      Math.sin(t * 13 + 0.7) * 0.12;
+    // Taper the envelope toward the edges so it reads as a centered burst.
+    const env = Math.sin((i / N) * Math.PI);
+    const y = 50 - a * env * 42;
+    pts.push(`${x.toFixed(2)},${y.toFixed(2)}`);
+  }
+  const mirror = pts
+    .slice()
+    .reverse()
+    .map((p) => {
+      const [x, y] = p.split(",").map(Number);
+      return `${x.toFixed(2)},${(100 - y).toFixed(2)}`;
+    });
+  return (
+    <svg
+      className="pointer-events-none absolute inset-0"
+      width="100%"
+      height="100%"
+      viewBox="0 0 100 100"
+      preserveAspectRatio="none"
+    >
+      <polyline points={pts.join(" ")} fill="none" stroke={stroke} strokeWidth={thickness} strokeLinejoin="round" vectorEffect="non-scaling-stroke" opacity={0.95} />
+      <polyline points={mirror.join(" ")} fill="none" stroke={stroke} strokeWidth={thickness} strokeLinejoin="round" vectorEffect="non-scaling-stroke" opacity={0.35} />
+    </svg>
+  );
+}
+
 // Dropdown trigger preview — shows the current selection label on the left
 // and a ▼ chevron on the right. Mirrors the trigger's synthetic Label child
 // slot that the exporter creates (Text whose Content gets re-written on each
@@ -1053,7 +1101,7 @@ function ReferenceFieldPreview({ props }: { props: any }) {
   );
 }
 
-function TextFieldPreview({ props }: { props: any }) {
+function TextFieldPreview({ props, radius = 3 }: { props: any; radius?: number }) {
   const bg = props.backgroundTint ?? { r: 0.12, g: 0.12, b: 0.12, a: 1 };
   const textColor = props.textColor ?? { r: 0.9, g: 0.9, b: 0.9, a: 1 };
   const phColor = props.placeholderColor ?? { r: 0.45, g: 0.45, b: 0.45, a: 1 };
@@ -1068,7 +1116,7 @@ function TextFieldPreview({ props }: { props: any }) {
       style={{
         background: colorToCss(bg),
         border: "1px solid rgba(148,163,184,0.25)",
-        borderRadius: 3,
+        borderRadius: radius,
         fontSize: props.fontSize ?? 16,
         color: hasContent ? colorToCss(textColor) : colorToCss(phColor),
         whiteSpace: "nowrap",

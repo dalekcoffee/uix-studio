@@ -169,12 +169,77 @@ export function moveSlotTo(
 
 /**
  * Deep-clone a slot subtree and reassign every slot id to a fresh uuid.
- * Components keep their structure; only slot identity changes.
+ * Components keep their structure; only slot identity changes. When `mapping`
+ * is supplied it records old id → new id for every slot in the subtree (so
+ * component props that reference in-subtree slots by id can be remapped after).
  */
-function reassignIds(slot: Slot): Slot {
-  slot.id = uuid();
-  for (const child of slot.children) reassignIds(child);
+function reassignIds(slot: Slot, mapping?: Map<string, string>): Slot {
+  const fresh = uuid();
+  if (mapping) mapping.set(slot.id, fresh);
+  slot.id = fresh;
+  for (const child of slot.children) reassignIds(child, mapping);
   return slot;
+}
+
+function walkComponents(slot: Slot, fn: (c: UixComponent) => void): void {
+  for (const c of slot.components) fn(c);
+  for (const ch of slot.children) walkComponents(ch, fn);
+}
+
+// Cross-element link plumbing: props whose string id pairs a driving SOURCE
+// (slider / picker / reference field) with driven TARGET(s) (float field / bar /
+// waveform) at export — see the "🔗 Links" pass in exportBrson.ts. The exporter
+// keys SOURCES by id (last write wins), so ids must stay unique per source.
+const LINK_SOURCE_PROPS: ReadonlyArray<{ type: string; key: string }> = [
+  { type: "Slider", key: "linkId" },
+  { type: "ColorPicker", key: "linkId" },
+  { type: "ReferenceField", key: "audioLinkId" },
+];
+const LINK_TARGET_PROPS: ReadonlyArray<{ type: string; key: string }> = [
+  { type: "TextField", key: "bindSliderId" },
+  { type: "ProgressBar", key: "colorLinkId" },
+  { type: "Waveform", key: "audioLinkId" },
+];
+
+/**
+ * Fix up cross-element link ids on a freshly duplicated subtree:
+ *  1. Every link SOURCE in the copy gets a fresh id — a copy keeping its id
+ *     would silently UNBIND the original control (exporter source map is
+ *     last-wins). Targets inside the copy follow their source to the fresh id,
+ *     so a duplicated picker+bar (or slider+field, reference+waveform) pair
+ *     stays linked to itself. Targets whose source stayed outside the copy
+ *     keep the old id — they remain driven by the original source.
+ *  2. A "Take ownership" Button references a UserProfile card by EDITOR slot
+ *     id; if the card came along in the copy, follow it to the reassigned id
+ *     (left pointing outside, both buttons would assign the original card).
+ */
+function remapLinkRefs(slot: Slot, slotIdMap: Map<string, string>): void {
+  const freshLinkIds = new Map<string, string>();
+  walkComponents(slot, (c) => {
+    for (const s of LINK_SOURCE_PROPS) {
+      if (c.type !== s.type) continue;
+      const cur = (c.props as Record<string, unknown>)[s.key];
+      if (typeof cur === "string" && cur.length > 0) {
+        if (!freshLinkIds.has(cur)) freshLinkIds.set(cur, uuid());
+        (c.props as Record<string, unknown>)[s.key] = freshLinkIds.get(cur);
+      }
+    }
+  });
+  walkComponents(slot, (c) => {
+    for (const t of LINK_TARGET_PROPS) {
+      if (c.type !== t.type) continue;
+      const cur = (c.props as Record<string, unknown>)[t.key];
+      if (typeof cur === "string" && freshLinkIds.has(cur)) {
+        (c.props as Record<string, unknown>)[t.key] = freshLinkIds.get(cur);
+      }
+    }
+    if (c.type === "Button") {
+      const cur = (c.props as Record<string, unknown>).takeOwnershipLinkId;
+      if (typeof cur === "string" && slotIdMap.has(cur)) {
+        (c.props as Record<string, unknown>).takeOwnershipLinkId = slotIdMap.get(cur);
+      }
+    }
+  });
 }
 
 /**
@@ -211,8 +276,10 @@ export function duplicateSlot(
   const idx = parent.children.findIndex((c) => c.id === id);
   if (idx < 0) return { root, newId: null };
   const original = parent.children[idx];
-  const copy = reassignIds(clone(original));
+  const idMap = new Map<string, string>();
+  const copy = reassignIds(clone(original), idMap);
   clearStaleSlotRefs(copy);
+  remapLinkRefs(copy, idMap);
   copy.name = uniqueCopyName(parent, original.name);
   parent.children.splice(idx + 1, 0, copy);
   return { root: r, newId: copy.id };
