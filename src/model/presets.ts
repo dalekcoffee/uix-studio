@@ -2979,7 +2979,6 @@ export const BUILTIN_PRESETS: readonly PresetDescriptor[] = [
     description:
       "Modal-style dialog: dim backdrop, centered card, title, body text, OK button, and red ✕ close in the corner.",
     category: "dialog",
-    freeform: true,
     build: buildSimpleDialog,
   },
   {
