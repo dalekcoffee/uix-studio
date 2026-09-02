@@ -417,6 +417,9 @@ export const es: Dictionary = {
     saved: "✓ ¡Guardado!",
     apply: "Aplicar marca",
     uploadFailed: (msg) => `No se pudo subir la imagen: ${msg}`,
+    libraryOpen: (n: number): string => `Biblioteca (${n})`,
+    libraryHide: "Ocultar biblioteca",
+    libraryHint: "Elige una que ya subiste, o sube una nueva.",
   },
 
   theme: {

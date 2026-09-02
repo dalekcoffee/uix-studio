@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "../state/store";
-import { addImageFile } from "../io/imageStore";
+import {
+  addImageFile,
+  deleteImage,
+  listImages,
+  subscribeImageStore,
+  type StoredImage,
+} from "../io/imageStore";
+import { ImageLibrary } from "./inspector/ImageLibrary";
 import { useCustomImageUrl } from "./useCustomImageUrl";
 import { useDialog } from "./useDialog";
 import { useT } from "../locale/useT";
@@ -29,6 +36,24 @@ export default function BrandingMenu({ onClose }: { onClose: () => void }) {
   // again, doubling commits to undo history).
   const [justSaved, setJustSaved] = useState(false);
   const savedTimerRef = useRef<number | null>(null);
+  // The uploaded-image library, same store the Inspector's picker reads — a
+  // back logo is usually an image the user already brought in for the panel, so
+  // making them re-upload it here was busywork.
+  const [images, setImages] = useState<StoredImage[]>([]);
+  const [showLibrary, setShowLibrary] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () =>
+      listImages().then((all) => {
+        if (!cancelled) setImages(all.sort((a, b) => b.addedAt - a.addedAt));
+      });
+    refresh();
+    const unsub = subscribeImageStore(refresh);
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, []);
   useEffect(() => () => {
     if (savedTimerRef.current) window.clearTimeout(savedTimerRef.current);
   }, []);
@@ -48,6 +73,13 @@ export default function BrandingMenu({ onClose }: { onClose: () => void }) {
 
   function clearLogoImage() {
     setTheme({ backLogoImageHash: "" });
+  }
+
+  async function removeFromLibrary(hash: string) {
+    if (!(await dialog.confirm(t.library.deleteOneConfirm))) return;
+    await deleteImage(hash);
+    // Dropping the image the logo points at would leave a dead reference.
+    if (theme.backLogoImageHash === hash) setTheme({ backLogoImageHash: "" });
   }
 
   return (
@@ -102,6 +134,12 @@ export default function BrandingMenu({ onClose }: { onClose: () => void }) {
             >
               {t.branding.uploadImage}
             </button>
+            <button
+              onClick={() => setShowLibrary((v) => !v)}
+              className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-slate-100 transition hover:border-sky-500/60 hover:bg-slate-700"
+            >
+              {showLibrary ? t.branding.libraryHide : t.branding.libraryOpen(images.length)}
+            </button>
             {theme.backLogoImageHash && (
               <button
                 onClick={clearLogoImage}
@@ -115,6 +153,20 @@ export default function BrandingMenu({ onClose }: { onClose: () => void }) {
             </p>
           </div>
         </div>
+        {showLibrary && (
+          <div className="mt-2 flex flex-col gap-1.5">
+            <p className="text-[10px] text-slate-500">{t.branding.libraryHint}</p>
+            <ImageLibrary
+              images={images}
+              currentHash={theme.backLogoImageHash}
+              onPick={(hash) => {
+                setTheme({ backLogoImageHash: hash });
+                setShowLibrary(false);
+              }}
+              onDelete={removeFromLibrary}
+            />
+          </div>
+        )}
       </Section>
 
       <Section title={t.branding.clickHyperlink}>

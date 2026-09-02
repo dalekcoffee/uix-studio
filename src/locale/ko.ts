@@ -416,6 +416,9 @@ export const ko: Dictionary = {
     saved: "✓ 저장됨!",
     apply: "브랜딩 적용",
     uploadFailed: (msg) => `이미지 업로드 실패: ${msg}`,
+    libraryOpen: (n: number): string => `라이브러리 (${n})`,
+    libraryHide: "라이브러리 숨기기",
+    libraryHint: "이미 업로드한 이미지를 고르거나 새로 올리세요.",
   },
 
   theme: {
