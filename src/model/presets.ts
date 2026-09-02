@@ -96,7 +96,10 @@ function makeCloseBtn(rt: UixComponent): Slot {
 
 // Gray background + purple-tinted ? icon — matches the Experimental Panel's
 // help/info button pattern. Pass a RectTransform component for positioning.
-function makeHelpBtn(rt: UixComponent): Slot {
+// `popup` overrides the default Popup props (title / body / dismissLabel, and
+// optionally `contentSlotId` to point the button at an authored PopupContent
+// card instead of the synthesized title+body modal).
+function makeHelpBtn(rt: UixComponent, popup?: Record<string, unknown>): Slot {
   const glyph = slot("Icon Glyph", [
     fillRT(),
     c("Image", { tint: rgb(1, 1, 1), iconTint: rgb(0.58, 0.44, 0.85), preserveAspect: true, spriteUrl: "", useHelpIcon: true }),
@@ -106,7 +109,7 @@ function makeHelpBtn(rt: UixComponent): Slot {
     rt,
     c("Image", { tint: helpGray, preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
     c("Button", { normalColor: helpGray, highlightColor: rgb(0.35, 0.35, 0.35), pressColor: rgb(0.15, 0.15, 0.15), disabledColor: rgb(0.3, 0.3, 0.3), hoverVibrate: false }),
-    c("Popup", { title: "About this panel", body: "Replace this with your panel's description. Edit the Popup component on the Icon slot to change the title and body.", dismissLabel: "Got it" }),
+    c("Popup", popup ?? { title: "About this panel", body: "Replace this with your panel's description. Edit the Popup component on the Icon slot to change the title and body.", dismissLabel: "Got it" }),
   ], [glyph]);
 }
 
@@ -2956,6 +2959,308 @@ function buildFrequencyLinkPanel(): Slot {
   );
 }
 
+// ── RESOPAL (Palworld TCG deck import) ───────────────────────────────────────
+// A deck-import console for the Palworld card game: the standard header (ⓘ
+// info + title + ✕ close), a short description and a status line, a link out to
+// palify.org, a QUICK IMPORT section with three one-click buttons, an OR PASTE
+// YOUR OWN section with a scrollable paste box + import action, and a "Debug
+// info" button whose dialog holds two fields (the outbound HTTP call and its
+// response) to drive from ProtoFlux in-game. The header's ⓘ opens the about +
+// credits dialog. Snap (stack) by default — rows sit on the 12px gap rhythm.
+//
+// Both dialogs are AUTHORED PopupContent cards (direct Canvas-root children,
+// linked by Popup.contentSlotId) rather than the synthesized title/body modal,
+// so their contents are real, editable slots.
+function buildResopalPanel(): Slot {
+  const W = 560;
+  const H = 782;
+
+  const BG       = rgb(0.055, 0.055, 0.060);
+  const HDR_GOLD = rgb(0.85,  0.69,  0.41);   // header banner
+  const HDR_TEXT = rgb(0.09,  0.08,  0.06);   // dark caption on the gold banner
+  const CARD     = rgb(0.145, 0.145, 0.155);  // button / row surface
+  const CARD_HI  = rgb(0.21,  0.21,  0.22);
+  const CARD_LO  = rgb(0.10,  0.10,  0.11);
+  const FIELD    = rgb(0.035, 0.035, 0.040);  // paste box / debug fields
+  const SURFACE  = rgb(0.12,  0.12,  0.13);   // dialog card
+  const TEXT     = rgb(0.92,  0.92,  0.93);
+  const MUTED    = rgb(0.55,  0.56,  0.60);
+  const GOLD     = rgb(0.87,  0.71,  0.36);
+  const CYAN     = rgb(0.31,  0.76,  0.91);
+
+  const background = buildBackgroundTrio(BG);
+
+  // A box measured in px from its PARENT's top-left corner (Y downward) at a
+  // fixed size — used inside the dialog cards, which aren't canvas-sized.
+  const pl = (left: number, top: number, w: number, h: number): UixComponent =>
+    c("RectTransform", {
+      anchorMin: { x: 0, y: 1 }, anchorMax: { x: 0, y: 1 },
+      offsetMin: { x: left, y: -(top + h) }, offsetMax: { x: left + w, y: -top },
+      pivot: { x: 0.5, y: 0.5 },
+    });
+
+  // ── Shared builders ─────────────────────────────────────────────────────────
+  // Caption always lives on a child "Label" slot: Resonite renders one Graphic
+  // per slot, so a Text next to the opaque Image would render blank.
+  function label(text: string, size: number, color: ReturnType<typeof rgb>, align: "Left" | "Center" | "Right" = "Center"): Slot {
+    return slot("Label", [
+      fillRT(),
+      c("Text", { content: text, size, color, horizontalAlign: align, verticalAlign: "Middle", autoSize: false }),
+    ]);
+  }
+  function actionButton(name: string, top: number, height: number, text: string, size: number, textColor = TEXT): Slot {
+    return slot(name, [
+      rectRT(W, H, 16, top, W - 16, top + height),
+      c("Image", { tint: CARD, preserveAspect: false, spriteUrl: "", cornerRadius: 12 }),
+      c("Button", { normalColor: CARD, highlightColor: CARD_HI, pressColor: CARD_LO, disabledColor: rgb(0.3, 0.3, 0.3), hoverVibrate: false }),
+    ], [label(text, size, textColor)]);
+  }
+  function sectionLabel(name: string, top: number, text: string): Slot {
+    return slot(name, [
+      rectRT(W, H, 16, top, W - 16, top + 24),
+      c("Text", { content: text, size: 12, color: GOLD, horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false }),
+    ]);
+  }
+
+  // ── Dialog 1: About + Credits (opened by the header's ⓘ button) ─────────────
+  const ABOUT_W = 496, ABOUT_H = 348;
+  function creditRow(name: string, top: number, text: string): Slot {
+    return slot(name, [
+      pl(16, top, ABOUT_W - 32, 26),
+      c("Text", { content: text, size: 14, color: TEXT, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+    ]);
+  }
+  const aboutCard = slot("About Dialog", [
+    c("RectTransform", {
+      anchorMin: { x: 0.5, y: 0.5 }, anchorMax: { x: 0.5, y: 0.5 },
+      offsetMin: { x: -ABOUT_W / 2, y: -ABOUT_H / 2 }, offsetMax: { x: ABOUT_W / 2, y: ABOUT_H / 2 },
+      pivot: { x: 0.5, y: 0.5 },
+    }),
+    c("Image", { tint: SURFACE, preserveAspect: false, spriteUrl: "", cornerRadius: 16 }),
+    c("PopupContent", {}),
+  ], [
+    slot("Title", [
+      pl(16, 14, ABOUT_W - 32, 28),
+      c("Text", { content: "About RESOPAL", size: 20, color: TEXT, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+    ]),
+    slot("Body", [
+      pl(16, 50, ABOUT_W - 32, 96),
+      c("Text", {
+        content:
+          "RESOPAL is a deck import tool for the Palworld card game. Pick a trial deck or open a booster to spawn a playable set in-world, or paste a Palify deck link to import a build you made yourself.",
+        size: 14, color: MUTED, horizontalAlign: "Left", verticalAlign: "Top", autoSize: false,
+      }),
+    ]),
+    slot("Credits Label", [
+      pl(16, 154, ABOUT_W - 32, 20),
+      c("Text", { content: "CREDITS", size: 12, color: GOLD, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+    ]),
+    creditRow("Credit Palify",    180, "Card data — Palify · palify.org"),
+    creditRow("Credit Ukilop",    210, "Deck template — Ukilop"),
+    creditRow("Credit Sharkmake", 240, "Card templates & TCG field systems — Sharkmake (AKA Flux)"),
+    slot("Dismiss", [
+      pl((ABOUT_W - 112) / 2, 288, 112, 36),
+      c("Image", { tint: rgb(0.18, 0.36, 0.60), preserveAspect: false, spriteUrl: "", cornerRadius: 8 }),
+      c("Button", { normalColor: rgb(0.18, 0.36, 0.60), highlightColor: rgb(0.26, 0.46, 0.72), pressColor: rgb(0.12, 0.26, 0.44), disabledColor: rgb(0.3, 0.3, 0.3), hoverVibrate: false }),
+      c("PopupDismiss", {}),
+    ], [label("Close", 15, rgb(1, 1, 1))]),
+  ]);
+
+  // ── Dialog 2: Debug info (request / response fields) ────────────────────────
+  // Two plain TextFields: drive their Text.Content from ProtoFlux in Resonite so
+  // the panel shows the outbound HTTP call and whatever came back.
+  const DBG_W = 496, DBG_H = 322;
+  function debugField(name: string, top: number, textContent: string, placeholder: string): Slot {
+    return slot(name, [
+      pl(16, top, DBG_W - 32, 74),
+      c("Image", { tint: FIELD, preserveAspect: false, spriteUrl: "", cornerRadius: 10 }),
+      c("TextField", {
+        placeholder, textContent, fontSize: 13, textAlign: "Left",
+        textColor: TEXT, placeholderColor: MUTED, backgroundTint: FIELD,
+      }),
+    ]);
+  }
+  const debugCard = slot("Debug Dialog", [
+    c("RectTransform", {
+      anchorMin: { x: 0.5, y: 0.5 }, anchorMax: { x: 0.5, y: 0.5 },
+      offsetMin: { x: -DBG_W / 2, y: -DBG_H / 2 }, offsetMax: { x: DBG_W / 2, y: DBG_H / 2 },
+      pivot: { x: 0.5, y: 0.5 },
+    }),
+    c("Image", { tint: SURFACE, preserveAspect: false, spriteUrl: "", cornerRadius: 16 }),
+    c("PopupContent", {}),
+  ], [
+    slot("Title", [
+      pl(16, 14, DBG_W - 32, 28),
+      c("Text", { content: "Debug info", size: 20, color: TEXT, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+    ]),
+    slot("Request Label", [
+      pl(16, 48, DBG_W - 32, 18),
+      c("Text", { content: "REQUEST", size: 11, color: GOLD, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+    ]),
+    debugField("Request Field", 70, "GET https://palify.org/api/deck/…", "Outbound request — drive this field from ProtoFlux"),
+    slot("Response Label", [
+      pl(16, 152, DBG_W - 32, 18),
+      c("Text", { content: "RESPONSE", size: 11, color: GOLD, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+    ]),
+    debugField("Response Field", 174, "Waiting for a response…", "Response body — drive this field from ProtoFlux"),
+    slot("Dismiss", [
+      pl((DBG_W - 112) / 2, 262, 112, 36),
+      c("Image", { tint: rgb(0.18, 0.36, 0.60), preserveAspect: false, spriteUrl: "", cornerRadius: 8 }),
+      c("Button", { normalColor: rgb(0.18, 0.36, 0.60), highlightColor: rgb(0.26, 0.46, 0.72), pressColor: rgb(0.12, 0.26, 0.44), disabledColor: rgb(0.3, 0.3, 0.3), hoverVibrate: false }),
+      c("PopupDismiss", {}),
+    ], [label("Close", 15, rgb(1, 1, 1))]),
+  ]);
+
+  // ── Header: ⓘ info + logo + title + ✕ close on a gold banner ────────────────
+  const infoBtn = makeHelpBtn(
+    c("RectTransform", {
+      anchorMin: { x: 0, y: 0.5 }, anchorMax: { x: 0, y: 0.5 },
+      offsetMin: { x: 10, y: -18 }, offsetMax: { x: 46, y: 18 },
+      pivot: { x: 0.5, y: 0.5 },
+    }),
+    {
+      title: "About RESOPAL",
+      body:
+        "RESOPAL is a deck import tool for the Palworld card game. Credits: card data by Palify, deck template by Ukilop, card templates & TCG field systems by Sharkmake (AKA Flux).",
+      dismissLabel: "Close",
+      contentSlotId: aboutCard.id,
+    },
+  );
+  // Drop-your-own-mark tile. cornerRadius keeps it a circle (and keeps the theme
+  // passes off it) — swap in your own image from the Inspector.
+  const headerLogo = slot("Deck Logo", [
+    c("RectTransform", {
+      anchorMin: { x: 0, y: 0.5 }, anchorMax: { x: 0, y: 0.5 },
+      offsetMin: { x: 54, y: -18 }, offsetMax: { x: 90, y: 18 },
+      pivot: { x: 0.5, y: 0.5 },
+    }),
+    c("Image", { tint: rgb(1, 1, 1), preserveAspect: true, spriteUrl: "", useImagePlaceholder: true, cornerRadius: 100 }),
+  ]);
+  const headerTitle = slot("Title", [
+    c("RectTransform", {
+      anchorMin: { x: 0, y: 0 }, anchorMax: { x: 1, y: 1 },
+      offsetMin: { x: 98, y: 0 }, offsetMax: { x: -52, y: 0 },
+      pivot: { x: 0.5, y: 0.5 },
+    }),
+    c("Text", { content: "RESOPAL", size: 28, color: HDR_TEXT, horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false, themeLock: true }),
+  ]);
+  const closeBtn = makeCloseBtn(c("RectTransform", {
+    anchorMin: { x: 1, y: 0.5 }, anchorMax: { x: 1, y: 0.5 },
+    offsetMin: { x: -46, y: -18 }, offsetMax: { x: -10, y: 18 },
+    pivot: { x: 0.5, y: 0.5 },
+  }));
+  const header = slot("Header", [
+    rectRT(W, H, 0, 0, W, 56),
+    c("Image", { tint: HDR_GOLD, preserveAspect: false, spriteUrl: "", cornerRadius: 30 }),
+  ], [infoBtn, headerLogo, headerTitle, closeBtn]);
+
+  // ── Body ────────────────────────────────────────────────────────────────────
+  const description = slot("Description", [
+    rectRT(W, H, 16, 68, W - 16, 112),
+    c("Text", {
+      content:
+        "Import Palworld TCG decks straight into your world — grab a starter below, or paste a Palify deck link.",
+      size: 14, color: MUTED, horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false,
+    }),
+  ]);
+  const status = slot("Status", [
+    rectRT(W, H, 16, 124, W - 16, 150),
+    c("Text", {
+      content: "Ready — pick a deck, or paste a palify link",
+      size: 15, color: CYAN, horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false,
+    }),
+  ]);
+  // Clickable link out to palify.org. The URL lives on the Image; the exporter
+  // wires a rect-routed Button + Hyperlink (and prepends the "@" that survives
+  // BSON import). Named "Link Button" so it rides the theme's secondary color.
+  const palifyLink = slot("Link Button", [
+    rectRT(W, H, 16, 162, W - 16, 202),
+    c("Image", {
+      tint: CARD, preserveAspect: false, spriteUrl: "", cornerRadius: 12,
+      hyperlinkUrl: "https://palify.org/",
+      hyperlinkReason: "Build or browse a Palworld TCG deck on palify.org",
+    }),
+  ], [label("Build a deck at palify.org  ↗", 15, GOLD)]);
+
+  const quickLabel = sectionLabel("Quick Import Label", 214, "QUICK IMPORT");
+  const deckA   = actionButton("Trial Deck A", 250, 44, "Trial Deck  ·  Red / Blue", 18);
+  const deckB   = actionButton("Trial Deck B", 306, 44, "Trial Deck  ·  Green / Purple", 18);
+  const booster = actionButton("Booster BP01", 362, 44, "Open 1 Booster  ·  BP01", 18);
+
+  const pasteLabel = sectionLabel("Paste Label", 418, "OR PASTE YOUR OWN");
+  // The paste box scrolls: the field's preferred height (240) is taller than the
+  // 170px viewport, so a long pasted link/list can always be scrolled through.
+  const pasteInput = slot("Deck Link Input", [
+    fillRT(),
+    c("LayoutElement", {
+      minWidth: -1, minHeight: 240, preferredWidth: -1, preferredHeight: 240,
+      flexibleWidth: -1, flexibleHeight: -1, orderOffset: 0,
+    }),
+    c("Image", { tint: FIELD, preserveAspect: false, spriteUrl: "", cornerRadius: 10 }),
+    c("TextField", {
+      placeholder: "Paste a palify.org deck link here…",
+      textContent: "",
+      fontSize: 14, textAlign: "Left",
+      textColor: TEXT, placeholderColor: MUTED, backgroundTint: FIELD,
+    }),
+  ]);
+  const pasteViewport = slot("Scroll Viewport", [
+    fillRT(),
+    c("ScrollArea", {
+      direction: "Vertical",
+      backgroundTint: rgb(0.075, 0.075, 0.085, 1),
+      spacing: 6, padding: 8,
+      showScrollbar: true,
+      scrollbarTrackTint: rgb(0.15, 0.15, 0.17, 1),
+      scrollbarThumbTint: rgb(0.55, 0.56, 0.60, 1),
+    }),
+  ], [pasteInput]);
+  const pasteArea = slot("Paste Area", [rectRT(W, H, 16, 454, W - 16, 624)], [pasteViewport]);
+
+  // Primary action ("Button A" rides the theme's primary button color).
+  const importBtn = slot("Button A", [
+    rectRT(W, H, 16, 636, W - 16, 680),
+    c("Image", { tint: CARD, preserveAspect: false, spriteUrl: "", cornerRadius: 12 }),
+    c("Button", { normalColor: CARD, highlightColor: CARD_HI, pressColor: CARD_LO, disabledColor: rgb(0.3, 0.3, 0.3), hoverVibrate: false }),
+  ], [label("Import what I pasted", 18, TEXT)]);
+
+  // Secondary action ("Button B") — opens the authored debug dialog.
+  const debugBtn = slot("Button B", [
+    rectRT(W, H, 16, 692, W - 16, 724),
+    c("Image", { tint: rgb(0.10, 0.10, 0.11), preserveAspect: false, spriteUrl: "", cornerRadius: 10 }),
+    c("Button", { normalColor: rgb(0.10, 0.10, 0.11), highlightColor: rgb(0.16, 0.16, 0.17), pressColor: rgb(0.07, 0.07, 0.08), disabledColor: rgb(0.3, 0.3, 0.3), hoverVibrate: false }),
+    c("Popup", {
+      title: "Debug info",
+      body: "The outbound request and the response it came back with.",
+      dismissLabel: "Close",
+      contentSlotId: debugCard.id,
+    }),
+  ], [label("Debug info", 13, MUTED)]);
+
+  const footer = slot("Footer", [
+    rectRT(W, H, 16, 736, W - 16, 758),
+    c("Text", {
+      content: "Cards & data by Palify · palify.org",
+      size: 12, color: MUTED, horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false,
+    }),
+  ]);
+
+  return slot("Canvas", [
+    c("Canvas", { sizeX: W, sizeY: H, pixelScale: 0.0005, acceptPhysicalTouch: true, backgroundColor: BG, rounded: true }),
+    fillRT(),
+  ], [
+    background, header,
+    description, status, palifyLink,
+    quickLabel, deckA, deckB, booster,
+    pasteLabel, pasteArea,
+    importBtn, debugBtn, footer,
+    // Dialog cards: direct Canvas-root children, never rendered inline (the
+    // editor shows them as centered overlays while editing; the exporter lowers
+    // them into Active=false modal sub-trees).
+    aboutCard, debugCard,
+  ]);
+}
+
 export const BUILTIN_PRESETS: readonly PresetDescriptor[] = [
   {
     id: "experimental",
@@ -2980,6 +3285,14 @@ export const BUILTIN_PRESETS: readonly PresetDescriptor[] = [
       "Modal-style dialog: dim backdrop, centered card, title, body text, OK button, and red ✕ close in the corner.",
     category: "dialog",
     build: buildSimpleDialog,
+  },
+  {
+    id: "resopal",
+    name: "RESOPAL — Deck Import",
+    description:
+      "Palworld TCG deck-import console: gold header (ⓘ info + logo tile + ✕ close), description and status line, a clickable link out to palify.org, a QUICK IMPORT section with two trial decks and a booster, and an OR PASTE YOUR OWN section with a scrollable paste box + Import action. The Debug info button opens a dialog with Request / Response fields to drive from ProtoFlux; the header's ⓘ opens the about + credits dialog.",
+    category: "dialog",
+    build: buildResopalPanel,
   },
   {
     id: "basic-text",

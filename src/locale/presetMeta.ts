@@ -27,6 +27,14 @@ const PRESET_META: Record<string, PresetMeta> = {
       ja: "モーダル形式のダイアログ: 暗い背景、中央のカード、タイトル、本文、OK ボタン、隅の赤い ✕ 閉じるボタン。",
     },
   },
+  resopal: {
+    name: { ko: "RESOPAL — 덱 가져오기", es: "RESOPAL — Importar mazos", ja: "RESOPAL — デッキインポート" },
+    description: {
+      ko: "Palworld TCG 덱 가져오기 콘솔: 금색 헤더(ⓘ 정보 + 로고 타일 + ✕ 닫기), 설명과 상태 줄, palify.org로 연결되는 클릭 가능한 링크, 트라이얼 덱 2개와 부스터가 있는 빠른 가져오기 섹션, 스크롤되는 붙여넣기 상자와 가져오기 버튼이 있는 직접 붙여넣기 섹션. 디버그 정보 버튼은 ProtoFlux로 구동할 요청 / 응답 필드가 있는 대화 상자를 열고, 헤더의 ⓘ는 소개와 크레딧 대화 상자를 엽니다.",
+      es: "Consola de importación de mazos del TCG de Palworld: encabezado dorado (ⓘ información + mosaico de logo + ✕ cerrar), descripción y línea de estado, un enlace pulsable a palify.org, una sección de importación rápida con dos mazos de prueba y un sobre, y una sección para pegar el tuyo con una caja desplazable y el botón de importar. El botón de info de depuración abre un diálogo con campos de petición / respuesta para controlar desde ProtoFlux; la ⓘ del encabezado abre el diálogo de información y créditos.",
+      ja: "Palworld TCG のデッキインポートコンソール: 金色のヘッダー（ⓘ インフォ＋ロゴタイル＋✕ 閉じる）、説明とステータス行、palify.org へのクリック可能なリンク、トライアルデッキ2つとブースターのクイックインポートセクション、スクロールする貼り付けボックスとインポートボタンの自分で貼り付けセクション。デバッグ情報ボタンは ProtoFlux で駆動するリクエスト / レスポンスのフィールドを持つダイアログを開き、ヘッダーの ⓘ は概要とクレジットのダイアログを開きます。",
+    },
+  },
   "basic-text": {
     name: { ko: "기본 텍스트", es: "Texto básico", ja: "基本テキスト" },
     description: {
