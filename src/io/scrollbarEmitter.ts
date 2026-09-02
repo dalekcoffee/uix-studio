@@ -70,6 +70,13 @@ export interface ScrollbarExternalBindings {
 export interface ScrollbarColors {
   track: { r: number; g: number; b: number; a: number };
   thumb: { r: number; g: number; b: number; a: number };
+  /**
+   * The surface the bar sits on. The capture's top/bottom drop shadows fade the
+   * viewport's edges toward a hardcoded slate blue; recolouring them to the
+   * scroll surface makes the fade read as that surface dissolving instead of a
+   * blue rim around the field on a warm panel.
+   */
+  shadow: { r: number; g: number; b: number; a: number };
 }
 
 export interface EmittedScrollbar {
@@ -185,29 +192,110 @@ export function emitScrollbar(
   out.protoFlux.ParentReference = bindings.hostSlotId;
   out.dropShadows.ParentReference = bindings.hostSlotId;
 
-  if (colors) paintScrollbar(out.scrollbar, colors);
+  if (colors) {
+    paintScrollbar(out.scrollbar, colors);
+    paintDropShadows(out.dropShadows, colors.shadow);
+  }
 
   return out;
+}
+
+// A captured colour field: [r, g, b, a, "sRGB"]. Alpha and the profile tag are
+// preserved — the drop-shadow fade IS its alpha ramp, so only rgb is replaced.
+type ColorArr = [number, number, number, number, string];
+function isColorArr(v: unknown): v is ColorArr {
+  return (
+    Array.isArray(v) && v.length === 5 &&
+    v.slice(0, 4).every((n) => typeof n === "number") &&
+    typeof v[4] === "string"
+  );
+}
+function recolor(v: ColorArr, c: { r: number; g: number; b: number }): ColorArr {
+  return [c.r, c.g, c.b, v[3], v[4]];
 }
 
 // Re-skin the captured bar. The capture ships the source save's own palette — a
 // slate-blue track (0.17, 0.18, 0.21) and a near-white handle — which stayed
 // blue under a warm theme because nothing repainted it. Matched by SLOT NAME so
 // it survives structural drift in the template: "Background" is the track,
-// "Handel" (sic — the captured save's spelling) is the handle.
+// "Handel" (sic — the captured save's spelling) is the handle. The Slider's own
+// BaseColor is repainted too: it is what Resonite drives the handle from at
+// runtime, so leaving it white put the white handle straight back.
 function paintScrollbar(scrollbar: Record<string, unknown>, colors: ScrollbarColors): void {
-  const tintOf = (c: ScrollbarColors["track"]) => [c.r, c.g, c.b, c.a, "sRGB"];
-  const visit = (node: Record<string, unknown>) => {
+  // Which Tint field belongs to the track vs the handle. The Slider's colour
+  // drivers address their target by field ID, so this is what lets a driver be
+  // matched to the thing it paints.
+  let trackTintId = "";
+  let thumbTintId = "";
+  const eachComp = (
+    node: Record<string, unknown>,
+    fn: (name: string | undefined, data: Record<string, unknown>) => void,
+  ) => {
     const name = (node.Name as { Data?: string } | undefined)?.Data;
     const comps = (node.Components as { Data?: Array<{ Data?: Record<string, unknown> }> } | undefined)?.Data ?? [];
-    const paint = name === "Background" ? colors.track : name === "Handel" ? colors.thumb : null;
-    if (paint) {
-      for (const c of comps) {
-        const tint = c.Data?.Tint as { Data?: unknown } | undefined;
-        if (tint) tint.Data = tintOf(paint);
-      }
-    }
-    for (const child of (node.Children as Record<string, unknown>[] | undefined) ?? []) visit(child);
+    for (const c of comps) fn(name, c.Data ?? {});
+    for (const child of (node.Children as Record<string, unknown>[] | undefined) ?? []) eachComp(child, fn);
   };
-  visit(scrollbar);
+
+  // Pass 1 — the static tints.
+  eachComp(scrollbar, (name, data) => {
+    const paint = name === "Background" ? colors.track : name === "Handel" ? colors.thumb : null;
+    const tint = data.Tint as { ID?: string; Data?: unknown } | undefined;
+    if (paint && tint && isColorArr(tint.Data)) {
+      tint.Data = recolor(tint.Data, paint);
+      if (name === "Background") trackTintId = tint.ID ?? "";
+      else thumbTintId = tint.ID ?? "";
+    }
+    const base = data.BaseColor as { Data?: unknown } | undefined;
+    if (base && isColorArr(base.Data)) base.Data = recolor(base.Data, colors.thumb);
+  });
+
+  // Pass 2 — the Slider's ColorDrivers. These WRITE the tints above at runtime
+  // (resting state included), so painting only the static values left the bar
+  // slate-blue with a white handle the moment the panel loaded. Each entry names
+  // the field it drives, so it takes that field's colour; hover/press are the
+  // usual ±12% shades of it.
+  eachComp(scrollbar, (_name, data) => {
+    const drivers = (data.ColorDrivers as { Data?: Array<Record<string, unknown>> } | undefined)?.Data;
+    if (!Array.isArray(drivers)) return;
+    for (const d of drivers) {
+      const target = (d.ColorDrive as { Data?: unknown } | undefined)?.Data;
+      const paint =
+        target === trackTintId ? colors.track : target === thumbTintId ? colors.thumb : null;
+      if (!paint) continue;
+      const set = (key: string, c: { r: number; g: number; b: number }) => {
+        const f = d[key] as { Data?: unknown } | undefined;
+        if (f && isColorArr(f.Data)) f.Data = recolor(f.Data, c);
+      };
+      set("NormalColor", paint);
+      set("HighlightColor", shade(paint, 0.12));
+      set("PressColor", shade(paint, -0.12));
+    }
+  });
+}
+
+/** Lighten (positive) or darken (negative) a colour, clamped to 0..1. */
+function shade(c: { r: number; g: number; b: number }, amount: number) {
+  const f = (n: number) => Math.max(0, Math.min(1, n + amount));
+  return { r: f(c.r), g: f(c.g), b: f(c.b) };
+}
+
+// The top/bottom edge fades. Every colour in this subtree is the same fade tone —
+// static GradientImage corners, the ValueMultiDriver that writes them, and the
+// ValueGradientDriver's per-point values (the drivers win at runtime, so the
+// static tints alone were never enough) — so recolour them all, alpha intact.
+function paintDropShadows(dropShadows: Record<string, unknown>, shadow: { r: number; g: number; b: number }): void {
+  const visit = (v: unknown): void => {
+    if (Array.isArray(v)) {
+      for (const item of v) visit(item);
+      return;
+    }
+    if (!v || typeof v !== "object") return;
+    const obj = v as Record<string, unknown>;
+    for (const [k, val] of Object.entries(obj)) {
+      if (k === "Data" && isColorArr(val)) obj[k] = recolor(val, shadow);
+      else visit(val);
+    }
+  };
+  visit(dropShadows);
 }

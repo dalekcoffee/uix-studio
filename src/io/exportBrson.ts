@@ -5115,7 +5115,9 @@ function buildScrollAreaSlot(
         const emitted = emitScrollbar(
           { nextId, typeIndex: (full) => typeIndex(full) },
           { viewportRectFieldId, contentRectFieldId, contentScrollFieldId, hostSlotId: slotId },
-          { track: sbTrackTint, thumb: sbThumbTint },
+          // The edge fades take the scroll surface itself, so they read as that
+          // surface dissolving rather than a blue rim around the field.
+          { track: sbTrackTint, thumb: sbThumbTint, shadow: bgTint },
         );
 
         // The captured Scrollbar root fills its parent ([0,0]-[1,1]) because the
