@@ -1311,12 +1311,34 @@ export const useStore = create<State & Actions>((set, get) => {
       placed = updateComponentProp(placed, childId, "RectTransform", "anchorMin", anchor);
       placed = updateComponentProp(placed, childId, "RectTransform", "anchorMax", anchor);
     }
-    return applyResultToContainer(
+    let out = applyResultToContainer(
       placed,
       { id: parentId, strategy: "absolute", isRoot, absRect: parentAbs },
       result,
       canvasSize,
     );
+
+    // A popup card is a fixed-size surface the user arranges rows on, and unlike
+    // the page it never auto-grows — so one more row (an added credit line, a
+    // duplicated row) would push the dismiss button out through its bottom edge.
+    // Grow it DOWNWARD to fit: its children are top-anchored, so extending the
+    // bottom leaves every existing row exactly where it is.
+    if (!isRoot && parent.components.some((c) => c.type === "PopupContent")) {
+      const need = result.contentBottom - parentAbs.y;
+      const grow = need - parentAbs.h;
+      if (grow > 0.5) {
+        const rt = getRectTransform(findSlot(out, parentId) ?? parent);
+        // Authored cards are point-anchored (buildPopupContent centres them), so
+        // the bottom edge is offsetMin.y — Y-UP, hence subtract to move it down.
+        if (Math.abs(rt.anchorMin.y - rt.anchorMax.y) < 0.001) {
+          out = updateComponentProp(out, parentId, "RectTransform", "offsetMin", {
+            ...rt.offsetMin,
+            y: rt.offsetMin.y - grow,
+          });
+        }
+      }
+    }
+    return out;
   }
 
   // Re-stack the Canvas root after a top-level DUPLICATE so the copy sits
@@ -1468,17 +1490,26 @@ export const useStore = create<State & Actions>((set, get) => {
       if (get().root.id === id) return;
       const before = get().root;
       { const s = findSlot(before, id); if (s && isStructuralSlot(s)) return; }
-      // In snap mode a duplicate must never sit on top of its original. For a
-      // top-level (Canvas) element we re-stack so the copy lands directly below
-      // the original and everything beneath shifts down. (Inside a layout
-      // container — ScrollArea/Column — duplicateSlot already inserts the copy
-      // right after the original in child order, so the layout engine spaces them
-      // with no overlap and no fix is needed.)
-      const atRoot = findParent(before, id)?.id === before.id;
-      const snapRootDup = get().editMode === "snap" && atRoot;
+      // In snap mode a duplicate must never sit on top of its original. A
+      // top-level (Canvas) element re-stacks so the copy lands directly below the
+      // original and everything beneath shifts down. Inside a LAYOUT container
+      // (ScrollArea / Column) duplicateSlot's insert-after-the-original is enough
+      // — the layout engine spaces them. But any other container positions its
+      // children by raw RectTransform, so the copy inherited the original's rect
+      // and landed exactly on top of it, with no way to pull them apart (the
+      // "duplicated a credits line inside the popup card and they stacked"
+      // report). Seat it there the same way a reparented element is seated.
+      const parent = findParent(before, id);
+      const atRoot = parent?.id === before.id;
+      const snapMode = get().editMode === "snap";
+      const originalRect = snapMode && parent && !atRoot
+        ? computeAbsoluteRect(before, id, canvasSizeOf(before))
+        : null;
       const { root: next, newId } = duplicateSlot(before, id);
       if (!newId) return;
-      const result = snapRootDup ? reflowRootInsertAfter(next, id, newId) : next;
+      let result = next;
+      if (snapMode && atRoot) result = reflowRootInsertAfter(next, id, newId);
+      else if (originalRect && parent) result = placeReparentedChild(next, newId, parent.id, originalRect);
       commit(result);
       set({ selectedSlotId: newId });
     },

@@ -847,7 +847,16 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
             (container.strategy === "absolute" && draggedIds.length === 1),
           absolute: container.strategy === "absolute",
           snapshotRoot: root,
-          containers: getContainers(root, canvasSize),
+          // Scope the drag's drop targets to the surface being edited. A popup
+          // card is SMALLER than the canvas and, in the drag's (unshifted) canvas
+          // coordinates, always sits over the panel — so a drag that strayed past
+          // the card's edge resolved to the Canvas root and moved the element out
+          // of the dialog and into the panel behind it. While a card is lifted,
+          // only it and its own sub-containers can receive a drop; the same rule
+          // gripInScope applies to the grabbers.
+          containers: getContainers(root, canvasSize).filter((c) =>
+            gripInScope(root, popupScope, c.id),
+          ),
           pending: null,
           nudgeRect: null,
           widenContext: null,
@@ -856,7 +865,7 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
         },
       };
     },
-    [root, canvasSize, scale, select],
+    [root, canvasSize, scale, select, popupScope],
   );
 
   // Start a free/canvas drag (or delegate a snap move to beginFlow).

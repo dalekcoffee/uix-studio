@@ -199,10 +199,10 @@ const PRESET_TEXT: Record<string, Record<Target, string>> = {
     es: "¡No requiere instalación ni cuenta, y es gratis!",
     ja: "インストール不要・アカウント不要・無料で使えます！",
   },
-  "RESOPAL is a deck import tool for the Palworld card game. Credits: card data by Palify, deck template by Ukilop, card templates & TCG field systems by Sharkmake (AKA Flux).": {
-    ko: "RESOPAL은 Palworld 카드 게임용 덱 가져오기 도구입니다. 크레딧: 카드 데이터 Palify, 덱 템플릿 Ukilop, 카드 템플릿 및 TCG 필드 시스템 Sharkmake (AKA Flux).",
-    es: "RESOPAL es una herramienta de importación de mazos para el juego de cartas de Palworld. Créditos: datos de cartas por Palify, plantilla de mazo por Ukilop, plantillas de cartas y sistemas de campo TCG por Sharkmake (AKA Flux).",
-    ja: "RESOPAL は Palworld カードゲーム用のデッキインポートツールです。クレジット: カードデータ Palify、デッキテンプレート Ukilop、カードテンプレートと TCG フィールドシステム Sharkmake (AKA Flux)。",
+  "RESOPAL is a deck import tool for the Palworld card game. Credits: tool by Dalek, card data by Palify, deck template by Ukilop, card templates & TCG field systems by Sharkmake (AKA Flux).": {
+    ko: "RESOPAL은 Palworld 카드 게임용 덱 가져오기 도구입니다. 크레딧: 도구 Dalek, 카드 데이터 Palify, 덱 템플릿 Ukilop, 카드 템플릿 및 TCG 필드 시스템 Sharkmake (AKA Flux).",
+    es: "RESOPAL es una herramienta de importación de mazos para el juego de cartas de Palworld. Créditos: herramienta por Dalek, datos de cartas por Palify, plantilla de mazo por Ukilop, plantillas de cartas y sistemas de campo TCG por Sharkmake (AKA Flux).",
+    ja: "RESOPAL は Palworld カードゲーム用のデッキインポートツールです。クレジット: ツール Dalek、カードデータ Palify、デッキテンプレート Ukilop、カードテンプレートと TCG フィールドシステム Sharkmake (AKA Flux)。",
   },
   "RESOPAL is a deck import tool for the Palworld card game. Pick a trial deck or open a booster to spawn a playable set in-world, or paste a Palify deck link to import a build you made yourself.": {
     ko: "RESOPAL은 Palworld 카드 게임용 덱 가져오기 도구입니다. 트라이얼 덱을 고르거나 부스터를 열어 바로 플레이할 수 있는 세트를 월드에 생성하고, 직접 만든 덱은 Palify 링크를 붙여 넣어 가져오세요.",
@@ -253,6 +253,7 @@ const PRESET_TEXT: Record<string, Record<Target, string>> = {
   },
   "Toggle": { ko: "토글", es: "Interruptor", ja: "トグル" },
   "Total Score: — / 65": { ko: "총점: — / 65", es: "Puntuación total: — / 65", ja: "合計スコア: — / 65" },
+  "Tool by Dalek": { ko: "도구 제작: Dalek", es: "Herramienta por Dalek", ja: "ツール制作: Dalek" },
   "Trial Deck  ·  Green / Purple": {
     ko: "트라이얼 덱  ·  초록 / 보라",
     es: "Mazo de prueba  ·  Verde / Morado",
