@@ -321,6 +321,12 @@ const popupSchema = z.object({
   dismissLabel: z.string().default("Dismiss"),
   // Id of the linked PopupContent container slot. Absent until first edited.
   contentSlotId: z.string().optional(),
+  // Where the dialog opens relative to the panel. "Over" is the classic modal
+  // (centred on the panel behind a dimming backdrop); Left/Right/Above/Below
+  // park it just outside that edge with NO backdrop, so the panel stays lit and
+  // usable while the dialog is open — what a debug readout wants. Drives both
+  // the export and the editor's editing surface. See model/popupPlacement.ts.
+  placement: z.enum(["Over", "Left", "Right", "Above", "Below"]).default("Over"),
 });
 
 // PopupContent: marker on the editable popup-card container slot. Carries no
@@ -906,13 +912,21 @@ export const FIELD_DESCRIPTORS: Record<UixComponentType, readonly FieldDescripto
     { key: "onOffsetMin",  label: "On Offset Min",  kind: "vec2" },
     { key: "onOffsetMax",  label: "On Offset Max",  kind: "vec2" },
   ],
-  // No editable fields: the dialog's title/body/dismiss text are edited directly
-  // on the card via the "Edit popup dialog…" surface, so exposing the schema's
-  // title/body/dismissLabel here only confused users (editing them did nothing
-  // once the card was built). Those props live on in the schema purely as the
-  // initial seed for ensurePopupContent and the export fallback for un-edited
-  // popups — they're plumbing, not user-facing.
-  Popup: [],
+  // The dialog's title/body/dismiss text are edited directly on the card via the
+  // "Edit popup dialog…" surface, so exposing the schema's title/body/
+  // dismissLabel here only confused users (editing them did nothing once the
+  // card was built). Those props live on in the schema purely as the initial
+  // seed for ensurePopupContent and the export fallback for un-edited popups —
+  // they're plumbing, not user-facing. Placement IS user-facing: it decides
+  // whether the dialog covers the panel or opens beside it.
+  Popup: [
+    {
+      key: "placement",
+      label: "Placement",
+      kind: "enum",
+      options: ["Over", "Left", "Right", "Above", "Below"],
+    },
+  ],
   // Markers — no editable fields (the card is edited by arranging its children).
   PopupContent: [],
   PopupDismiss: [],
