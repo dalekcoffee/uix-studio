@@ -3237,6 +3237,9 @@ function buildResopalPanel(): Slot {
       body: "The outbound request and the response it came back with.",
       dismissLabel: "Close",
       contentSlotId: debugCard.id,
+      // Opens to the RIGHT of the panel with no dimming backdrop, so the request
+      // / response readout can be watched while the panel stays usable.
+      placement: "Right",
     }),
   ], [label("Debug info", 13, MUTED)]);
 

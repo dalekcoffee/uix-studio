@@ -454,7 +454,14 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
     const selCard = popupScope.cardIds.find(
       (cid) => cid === selectedId || isDescendant(root, cid, selectedId),
     );
-    if (selCard && selCard !== popupScope.activeCardId) {
+    if (selCard !== popupScope.activeCardId) {
+      // Two ways to be off the visible surface, both hidden — the same rule
+      // gripInScope applies to the grabbers:
+      //   * a card that isn't lifted (its overlay would strand over the panel
+      //     hiding it), or
+      //   * the main canvas while a card IS lifted — this layer is translated by
+      //     the popup shift, so a trigger's box would be drawn beside the panel
+      //     rather than on it.
       return { rect: displayRect, visible: false };
     }
     const byId = new Map(getContainers(root, canvasSize).map((c) => [c.id, c] as const));

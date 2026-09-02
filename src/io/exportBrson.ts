@@ -10,6 +10,12 @@ import type { Slot, UixComponent, UixDocument } from "../model/types";
 import { isStructuralSlot } from "../model/structural";
 import { DEFAULT_CONTENT_PADDING, SCROLLBAR_GUTTER, resolvePad } from "../model/padding";
 import { findBackgroundSlots } from "../model/background";
+import {
+  popupCardRT,
+  popupHasBackdrop,
+  popupPlacementOf,
+  type PopupPlacement,
+} from "../model/popupPlacement";
 import { controlDisplayName } from "../model/controlName";
 import { emitScrollbar } from "./scrollbarEmitter";
 
@@ -6386,10 +6392,11 @@ function buildCreditsSlot(
 function buildPopupModalSlot(
   parentId: string,
   modalActiveFieldId: string,
-  popupProps: { title?: string; body?: string; dismissLabel?: string },
+  popupProps: { title?: string; body?: string; dismissLabel?: string; placement?: unknown },
   canvasW: number,
   canvasH: number,
 ): Record<string, unknown> {
+  const placement: PopupPlacement = popupPlacementOf(popupProps as Record<string, unknown>);
   const title       = (popupProps.title       ?? "Heads up").trim()  || "Heads up";
   const body        = (popupProps.body        ?? "").trim()          || "Your message here.";
   const dismissText = (popupProps.dismissLabel ?? "OK").trim()       || "OK";
@@ -6599,10 +6606,10 @@ function buildPopupModalSlot(
   // ── Card slot — dark rounded rectangle holding title/body/OK ──
   const cardSlotId = nextId();
   const cardCompId = nextId();
+  // Placement decides where the card opens: centred on the panel ("Over") or
+  // parked just outside one of its edges. See model/popupPlacement.ts.
   const cardRt = compRectTransform({
-    anchorMin: { x: 0.5, y: 0.5 }, anchorMax: { x: 0.5, y: 0.5 },
-    offsetMin: { x: -cardW / 2, y: -cardH / 2 },
-    offsetMax: { x:  cardW / 2, y:  cardH / 2 },
+    ...popupCardRT(placement, cardW, cardH),
     pivot: { x: 0.5, y: 0.5 },
   });
   // Modest rounded card. Set the rect locally so the intermediate-radius
@@ -6662,7 +6669,9 @@ function buildPopupModalSlot(
     Scale:          { ID: nextId(), Data: vec3(1, 1, 1) },
     OrderOffset:    { ID: nextId(), Data: Long.fromNumber(0) },
     ParentReference: parentId,
-    Children: [backdrop, cardSlot],
+    // The dimming backdrop belongs to a modal only: a card parked beside the
+    // panel must leave it lit and clickable.
+    Children: popupHasBackdrop(placement) ? [backdrop, cardSlot] : [cardSlot],
   };
 
   // Patch ParentReference on the descendants now that we have the IDs.
@@ -6686,7 +6695,36 @@ function buildPopupModalSlotFromContent(
   parentId: string,
   modalActiveFieldId: string,
   contentSlot: Slot,
+  placement: PopupPlacement,
+  canvasW: number,
+  canvasH: number,
 ): Record<string, unknown> {
+  // Re-seat the authored card for its placement, keeping the size the user gave
+  // it. "Over" leaves the authored (centred) rect alone.
+  const authoredRt = (contentSlot.components.find((c) => c.type === "RectTransform")?.props ??
+    {}) as {
+      anchorMin?: { x: number; y: number };
+      anchorMax?: { x: number; y: number };
+      offsetMin?: { x: number; y: number };
+      offsetMax?: { x: number; y: number };
+    };
+  const aMin = authoredRt.anchorMin ?? { x: 0.5, y: 0.5 };
+  const aMax = authoredRt.anchorMax ?? { x: 0.5, y: 0.5 };
+  const oMin = authoredRt.offsetMin ?? { x: 0, y: 0 };
+  const oMax = authoredRt.offsetMax ?? { x: 0, y: 0 };
+  const cardW = (aMax.x - aMin.x) * canvasW + (oMax.x - oMin.x);
+  const cardH = (aMax.y - aMin.y) * canvasH + (oMax.y - oMin.y);
+  const placedCard: Slot =
+    placement === "Over"
+      ? contentSlot
+      : {
+          ...contentSlot,
+          components: contentSlot.components.map((c) =>
+            c.type === "RectTransform"
+              ? { ...c, props: { ...c.props, ...popupCardRT(placement, cardW, cardH) } }
+              : c,
+          ),
+        };
   // ── Backdrop slot (dims everything behind the card) ──
   const backdropSlotId = nextId();
   const backdropCompId = nextId();
@@ -6720,13 +6758,13 @@ function buildPopupModalSlotFromContent(
   // ── Card slot = the serialized PopupContent slot ──
   // Serialize the card shell (no children) to capture its RT + Image, then
   // serialize each child separately so we can inject the dismiss toggle.
-  const cardShell: Slot = { ...contentSlot, children: [] };
+  const cardShell: Slot = { ...placedCard, children: [] };
   const cardSlot = serializeSlot(cardShell, null) as Record<string, unknown> & {
     ID: string; Children: unknown[]; ParentReference: string | null;
   };
   const cardSlotId = cardSlot.ID;
   const cardChildren: unknown[] = [];
-  for (const child of contentSlot.children) {
+  for (const child of placedCard.children) {
     const ser = serializeSlot(child, cardSlotId) as Record<string, unknown> & {
       Components: { Data: Array<{ Type: Int32; Data: Record<string, unknown> }> };
     };
@@ -6761,7 +6799,9 @@ function buildPopupModalSlotFromContent(
     Scale:          { ID: nextId(), Data: vec3(1, 1, 1) },
     OrderOffset:    { ID: nextId(), Data: Long.fromNumber(0) },
     ParentReference: parentId,
-    Children: [backdrop, cardSlot],
+    // No backdrop unless the dialog is a true modal — a card beside the panel
+    // must leave it lit and clickable.
+    Children: popupHasBackdrop(placement) ? [backdrop, cardSlot] : [cardSlot],
   };
   (backdrop as { ParentReference: string | null }).ParentReference = modalSlotId;
   cardSlot.ParentReference = modalSlotId;
@@ -7391,8 +7431,11 @@ function buildRootWrapper(canvasSlot: Slot): Record<string, unknown> {
       // into the modal. Legacy path: synthesize the card from title/body/dismiss
       // (byte-identical to the pre-editable exporter).
       const contentSlot = findPopupContentSlot(canvasSlot, hostSlotId);
+      const placement = popupPlacementOf(hostProps);
       const modal = contentSlot
-        ? buildPopupModalSlotFromContent(containerSlotId, modalActiveId, contentSlot)
+        ? buildPopupModalSlotFromContent(
+            containerSlotId, modalActiveId, contentSlot, placement, canvasRect.w, canvasRect.h,
+          )
         : buildPopupModalSlot(containerSlotId, modalActiveId, hostProps, canvasRect.w, canvasRect.h);
       const popupTitle = (hostProps.title as string | undefined ?? "").trim();
       (modal.Name as { ID: string; Data: string }).Data =

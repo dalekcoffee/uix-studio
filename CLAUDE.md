@@ -178,6 +178,12 @@ Resonite raycasts against the collider; on click, the Hyperlink fires `Open()` a
 
 **Popup buttons should NOT use Hyperlink-as-popup.** Earlier we tried to make help/info buttons fire Resonite's native confirmation dialog by emitting a Hyperlink with empty URL; clicking it does nothing because the Hyperlink's `Open()` does nothing when URL is null, and even with a URL the dialog frames itself as an outbound web link ("External Link — Warning: Outgoing hyperlink"), which is wrong UX for an info dialog. Real popups need a spawn-window approach: a pre-built modal sub-tree under the canvas with `Active=false` initially, toggled by `ButtonValueSet<bool>` components on the trigger button (sets `popup.Active=true`) and the dismiss button (sets `popup.Active=false`). The `Popup` component still exists as the user-facing marker; the exporter lowers it into the spawn-window subtree.
 
+**Popup placement (`Popup.placement`, default `"Over"`).** A popup opens either ON the panel or beside it:
+- `Over` — the card is centred on the canvas behind a full-canvas `Image` backdrop at `alpha 0.7`: a true modal, the panel is dimmed and unusable until dismissed.
+- `Left` / `Right` / `Above` / `Below` — the card is anchored to that canvas edge and offset `POPUP_PLACEMENT_GAP` (16px) OUTSIDE it, and **no backdrop slot is emitted**, so the panel stays lit and clickable while the dialog is open (what a debug/telemetry readout wants). Nothing clips a canvas child to the canvas rect — clipping needs a `UIX.Mask` — so an off-panel card renders fine.
+
+Remember Y-UP when reading the offsets: `Above` anchors at `y=1` with POSITIVE offsets, `Below` at `y=0` with negative ones. The geometry lives in [popupPlacement.ts](src/model/popupPlacement.ts) and is shared by the exporter and the editor's popup editing surface, so the card previews exactly where it will open in-game.
+
 ### Reference Field drop targets: RefEditor, not UIX.ReferenceReceiver
 Despite its name, `[FrooxEngine]FrooxEngine.UIX.ReferenceReceiver` does not actually receive `IWorldElement` drops in current Resonite — the BSON loads fine, the Inspector shows the component, but drag-and-drop onto the slot silently does nothing. Verified against three example exports (`UIX Template/Reference Receiver Field`, `Text to String with Reference Field`, `Amaster's Debugger`); the second one is the canonical working pattern.
 

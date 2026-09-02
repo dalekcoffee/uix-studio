@@ -3,11 +3,14 @@ import type { Slot } from "../model/types";
 import { RenderedSlot } from "./render/renderSlot";
 import { RESONITE_FONT } from "./render/resoniteFont";
 import { computeChildRect, getRectTransform } from "./render/rectTransform";
+import { popupHasBackdrop, type PopupPlacement } from "../model/popupPlacement";
 
-// The popup editing surface — a floating "secondary canvas" that lifts the
-// popup's content card out into the dead space above (or below) the main canvas
-// instead of covering the panel. It renders the card at its real model position
-// inside a canvas-sized wrapper, then translates the whole wrapper by `shift`
+// The popup editing surface — a floating "secondary canvas" that seats the
+// popup's content card exactly where its `placement` will open it in Resonite:
+// centred ON the panel for a modal ("Over"), or out in the dead space beside the
+// panel edge for Left / Right / Above / Below. It renders the card at its real
+// model position inside a canvas-sized wrapper, then translates the wrapper by
+// `shift`
 // (canvas units). DragLayer translates the popup's grips by the SAME shift (its
 // container transform), so the card and its grabbers move together and stay
 // aligned, while the snap/drag math underneath still runs in unshifted canvas
@@ -22,11 +25,12 @@ interface Props {
   shift: { x: number; y: number }; // canvas units
   scale: number;
   canvasSize: { w: number; h: number };
+  placement: PopupPlacement;
 }
 
 const HEADER_H = 34; // canvas px, the labelled band above the card
 
-export default function PopupEditSurface({ card, shift, scale, canvasSize }: Props) {
+export default function PopupEditSurface({ card, shift, scale, canvasSize, placement }: Props) {
   const select = useStore((s) => s.select);
   const closePopupEdit = useStore((s) => s.closePopupEdit);
 
@@ -43,11 +47,19 @@ export default function PopupEditSurface({ card, shift, scale, canvasSize }: Pro
 
   return (
     <>
-      {/* Dim the main canvas (signals it's in the background) and catch
-          click-outside to close. Covers only the canvas, not the dead space. */}
+      {/* Click-outside-to-close backstop over the panel. A MODAL placement dims
+          it too — matching the backdrop the export bakes in; a card parked beside
+          the panel leaves it lit, because in-game that panel stays usable while
+          the dialog is open. Covers only the canvas, not the dead space. */}
       <div
         className="absolute"
-        style={{ left: 0, top: 0, width: scaledW, height: scaledH, background: "rgba(0,0,0,0.5)" }}
+        style={{
+          left: 0,
+          top: 0,
+          width: scaledW,
+          height: scaledH,
+          background: popupHasBackdrop(placement) ? "rgba(0,0,0,0.5)" : "transparent",
+        }}
         onClick={(e) => {
           e.stopPropagation();
           close();

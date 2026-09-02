@@ -8,6 +8,12 @@ import DragLayer from "./DragLayer";
 import ModeSwitchDialog from "./ModeSwitchDialog";
 import PopupEditSurface from "./PopupEditSurface";
 import { findActivePopupCard } from "./render/popupEdit";
+import {
+  popupCardShift,
+  popupPlacementOf,
+  popupShiftAxis,
+  type PopupPlacement,
+} from "../model/popupPlacement";
 import { computeChildRect, getRectTransform } from "./render/rectTransform";
 import { snapFitness } from "./render/snapFlow";
 import { dragController } from "./dragController";
@@ -181,31 +187,33 @@ export default function Viewport() {
     [root, editingPopupId],
   );
 
-  // Margins/bands used by both the placement shift and the pan-to-make-room
-  // effect below, so they agree on how much vertical room the card needs.
-  const POPUP_MARGIN = 16; // screen px gap between card and canvas edge
+  // Screen-px breathing room the pan-to-make-room effect leaves around a card
+  // parked outside the panel (the 34 is the editing surface's header band).
+  const POPUP_MARGIN = 16;
   const popupVertNeed = (cardScreenH: number) => cardScreenH + POPUP_MARGIN + 34 * scale;
 
-  // Lift vector (canvas units) that moves the card ABOVE or BELOW the canvas
-  // (always — never to the sides), choosing whichever side currently has more
-  // room ("whatever is closer"). The pan effect below guarantees the chosen side
-  // actually has room on tall panels. DragLayer gets the same shift and lifts the
-  // popup's grips/overlays to match.
+  // The popup's own placement (Over / Left / Right / Above / Below) — the SAME
+  // value the exporter uses to seat the card, so the editing surface previews
+  // exactly where the dialog will open in Resonite.
+  const popupPlacement = useMemo<PopupPlacement>(() => {
+    const host = editingPopupId ? findSlot(root, editingPopupId) : null;
+    return popupPlacementOf(
+      host?.components.find((c) => c.type === "Popup")?.props as Record<string, unknown> | undefined,
+    );
+  }, [root, editingPopupId]);
+
+  // Lift vector (canvas units) that seats the card where its placement says.
+  // "Over" needs none — the authored card is already centred on the panel, which
+  // is exactly how that (modal) placement renders in-game. DragLayer gets the
+  // same shift and lifts the popup's grips/overlays to match.
   const popupShift = useMemo(() => {
     if (!popupCard) return null;
     const cardRect = computeChildRect(
       { x: 0, y: 0, w: canvasSize.w, h: canvasSize.h },
       getRectTransform(popupCard),
     );
-    const cardScreenH = cardRect.h * scale;
-    const boxTop = size.h / 2 - scaledH / 2 + viewport.panY;
-    const deadAbove = boxTop;
-    const deadBelow = size.h - (boxTop + scaledH);
-    const above = deadAbove >= deadBelow; // more room = "closer"
-    const boxX = (scaledW - cardRect.w * scale) / 2; // centred over the canvas
-    const boxY = above ? -(cardScreenH + POPUP_MARGIN) : scaledH + POPUP_MARGIN;
-    return { x: boxX / scale - cardRect.x, y: boxY / scale - cardRect.y };
-  }, [popupCard, canvasSize, scale, scaledW, scaledH, size.h, viewport.panY]);
+    return popupCardShift(popupPlacement, canvasSize, cardRect);
+  }, [popupCard, popupPlacement, canvasSize]);
 
   // Pan-to-make-room: when a popup opens, a tall panel that fills the viewport
   // height has no dead space above/below, so the floated card would be clipped.
@@ -219,22 +227,32 @@ export default function Viewport() {
     const prev = prevPopupIdRef.current;
     prevPopupIdRef.current = id;
     if (id && !prev) {
-      // Opening: ensure the closer side has room; pan only if it doesn't.
+      // Opening: make sure the side the card is parked on actually has room.
+      // "Over" sits on the panel, which is already in view — nothing to pan.
+      const axis = popupShiftAxis(popupPlacement);
+      if (!axis) return;
       const cardRect = computeChildRect(
         { x: 0, y: 0, w: canvasSize.w, h: canvasSize.h },
         getRectTransform(popupCard!),
       );
-      const need = popupVertNeed(cardRect.h * scale) + 24; // a little breathing room
-      const half = size.h / 2 - scaledH / 2;
-      const boxTop = half + viewport.panY;
-      const deadAbove = boxTop;
-      const deadBelow = size.h - (boxTop + scaledH);
-      const above = deadAbove >= deadBelow;
-      const room = above ? deadAbove : deadBelow;
-      if (room < need || viewport.panX !== 0) {
-        savedViewRef.current = { ...viewport };
-        const panY = above ? need - half : half - need;
-        setViewport({ panX: 0, panY });
+      if (axis === "y") {
+        const need = popupVertNeed(cardRect.h * scale) + 24; // a little breathing room
+        const half = size.h / 2 - scaledH / 2;
+        const boxTop = half + viewport.panY;
+        const room = popupPlacement === "Above" ? boxTop : size.h - (boxTop + scaledH);
+        if (room < need) {
+          savedViewRef.current = { ...viewport };
+          setViewport({ panY: popupPlacement === "Above" ? need - half : half - need });
+        }
+      } else {
+        const need = cardRect.w * scale + POPUP_MARGIN + 24;
+        const half = size.w / 2 - scaledW / 2;
+        const boxLeft = half + viewport.panX;
+        const room = popupPlacement === "Left" ? boxLeft : size.w - (boxLeft + scaledW);
+        if (room < need) {
+          savedViewRef.current = { ...viewport };
+          setViewport({ panX: popupPlacement === "Left" ? need - half : half - need });
+        }
       }
     } else if (!id && prev) {
       // Closing: restore the view we saved on open (if we changed it).
@@ -245,7 +263,7 @@ export default function Viewport() {
     }
     // viewport is intentionally read (not a trigger): the id-transition guard
     // means the open/close body runs once per popup session, never on plain pans.
-  }, [popupCard, scale, scaledH, size.h, canvasSize, viewport, setViewport]);
+  }, [popupCard, popupPlacement, scale, scaledH, scaledW, size.h, size.w, canvasSize, viewport, setViewport]);
 
   // Wheel: ctrl+wheel zooms, plain wheel pans vertically
   const onWheel = useCallback(
@@ -421,6 +439,7 @@ export default function Viewport() {
             shift={popupShift}
             scale={scale}
             canvasSize={canvasSize}
+            placement={popupPlacement}
           />
         )}
 

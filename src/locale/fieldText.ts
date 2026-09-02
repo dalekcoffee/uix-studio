@@ -79,6 +79,7 @@ const FIELD_LABELS: Record<string, Record<Target, string>> = {
   "Page Padding": { ko: "페이지 여백", es: "Relleno de página", ja: "ページの余白" },
   "Pivot": { ko: "피벗", es: "Pivote", ja: "ピボット" },
   "Pixel Scale": { ko: "픽셀 배율", es: "Escala de píxeles", ja: "ピクセルスケール" },
+  "Placement": { ko: "위치", es: "Posición", ja: "表示位置" },
   "Placeholder Color": { ko: "자리 표시자 색상", es: "Color del marcador", ja: "プレースホルダーの色" },
   "Placeholder": { ko: "자리 표시자", es: "Marcador", ja: "プレースホルダー" },
   "Power Curve": { ko: "파워 커브", es: "Curva de potencia", ja: "パワーカーブ" },
@@ -129,6 +130,9 @@ const ENUM_OPTIONS: Record<string, Record<Target, string>> = {
   Middle: { ko: "중간", es: "Medio", ja: "中" },
   Bottom: { ko: "아래", es: "Abajo", ja: "下" },
   Both: { ko: "둘 다", es: "Ambos", ja: "両方" },
+  Over: { ko: "위에 겹침", es: "Encima", ja: "重ねて表示" },
+  Above: { ko: "위쪽", es: "Arriba", ja: "上側" },
+  Below: { ko: "아래쪽", es: "Abajo", ja: "下側" },
 };
 
 export function localizedFieldLabel(label: string, lang: Lang): string {
