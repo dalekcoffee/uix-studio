@@ -3023,7 +3023,7 @@ function buildResopalPanel(): Slot {
   }
 
   // ── Dialog 1: About + Credits (opened by the header's ⓘ button) ─────────────
-  const ABOUT_W = 496, ABOUT_H = 348;
+  const ABOUT_W = 496, ABOUT_H = 378;
   function creditRow(name: string, top: number, text: string): Slot {
     return slot(name, [
       pl(16, top, ABOUT_W - 32, 26),
@@ -3055,11 +3055,12 @@ function buildResopalPanel(): Slot {
       pl(16, 154, ABOUT_W - 32, 20),
       c("Text", { content: "CREDITS", size: 12, color: GOLD, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
     ]),
-    creditRow("Credit Palify",    180, "Card data — Palify · palify.org"),
-    creditRow("Credit Ukilop",    210, "Deck template — Ukilop"),
-    creditRow("Credit Sharkmake", 240, "Card templates & TCG field systems — Sharkmake (AKA Flux)"),
+    creditRow("Credit Dalek",     180, "Tool by Dalek"),
+    creditRow("Credit Palify",    210, "Card data — Palify · palify.org"),
+    creditRow("Credit Ukilop",    240, "Deck template — Ukilop"),
+    creditRow("Credit Sharkmake", 270, "Card templates & TCG field systems — Sharkmake (AKA Flux)"),
     slot("Dismiss", [
-      pl((ABOUT_W - 112) / 2, 288, 112, 36),
+      pl((ABOUT_W - 112) / 2, 318, 112, 36),
       c("Image", { tint: rgb(0.18, 0.36, 0.60), preserveAspect: false, spriteUrl: "", cornerRadius: 8 }),
       c("Button", { normalColor: rgb(0.18, 0.36, 0.60), highlightColor: rgb(0.26, 0.46, 0.72), pressColor: rgb(0.12, 0.26, 0.44), disabledColor: rgb(0.3, 0.3, 0.3), hoverVibrate: false }),
       c("PopupDismiss", {}),
@@ -3121,7 +3122,7 @@ function buildResopalPanel(): Slot {
     {
       title: "About RESOPAL",
       body:
-        "RESOPAL is a deck import tool for the Palworld card game. Credits: card data by Palify, deck template by Ukilop, card templates & TCG field systems by Sharkmake (AKA Flux).",
+        "RESOPAL is a deck import tool for the Palworld card game. Credits: tool by Dalek, card data by Palify, deck template by Ukilop, card templates & TCG field systems by Sharkmake (AKA Flux).",
       dismissLabel: "Close",
       contentSlotId: aboutCard.id,
     },
