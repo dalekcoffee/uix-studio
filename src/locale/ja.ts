@@ -416,6 +416,9 @@ export const ja: Dictionary = {
     saved: "✓ 保存しました！",
     apply: "ブランディングを適用",
     uploadFailed: (msg) => `画像のアップロードに失敗しました: ${msg}`,
+    libraryOpen: (n: number): string => `ライブラリ (${n})`,
+    libraryHide: "ライブラリを隠す",
+    libraryHint: "アップロード済みの画像から選ぶか、新しく追加します。",
   },
 
   theme: {

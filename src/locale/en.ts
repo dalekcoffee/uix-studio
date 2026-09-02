@@ -459,6 +459,9 @@ export const en = {
     saved: "✓ Saved!",
     apply: "Apply Branding",
     uploadFailed: (msg: string): string => `Failed to upload image: ${msg}`,
+    libraryOpen: (n: number): string => `Library (${n})`,
+    libraryHide: "Hide library",
+    libraryHint: "Pick one you've already uploaded, or upload a new one.",
   },
 
   // ── Theme menu (ThemeMenu.tsx) ──────────────────────────────────────────────
