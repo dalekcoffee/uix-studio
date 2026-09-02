@@ -3192,12 +3192,15 @@ function buildResopalPanel(): Slot {
   const booster = actionButton("Booster BP01", 362, 44, "Open 1 Booster  ·  BP01", 18);
 
   const pasteLabel = sectionLabel("Paste Label", 418, "OR PASTE YOUR OWN");
-  // The paste box scrolls: the field's preferred height (240) is taller than the
-  // 170px viewport, so a long pasted link/list can always be scrolled through.
+  // The paste box scrolls: the field is far taller than the 170px viewport, so a
+  // pasted deck list scrolls instead of running out past the box. 480 holds a
+  // full 50-card list (~27 lines at this size) — a UIX Text is not clipped to its
+  // rect, so a field shorter than its content spills over the panel rather than
+  // being cut off.
   const pasteInput = slot("Deck Link Input", [
     fillRT(),
     c("LayoutElement", {
-      minWidth: -1, minHeight: 240, preferredWidth: -1, preferredHeight: 240,
+      minWidth: -1, minHeight: 480, preferredWidth: -1, preferredHeight: 480,
       flexibleWidth: -1, flexibleHeight: -1, orderOffset: 0,
     }),
     c("Image", { tint: FIELD, preserveAspect: false, spriteUrl: "", cornerRadius: 10 }),
@@ -3215,8 +3218,11 @@ function buildResopalPanel(): Slot {
       backgroundTint: rgb(0.075, 0.075, 0.085, 1),
       spacing: 6, padding: 8,
       showScrollbar: true,
-      scrollbarTrackTint: rgb(0.15, 0.15, 0.17, 1),
-      scrollbarThumbTint: rgb(0.55, 0.56, 0.60, 1),
+      // Track = a groove recessed from the scroll surface; grabber = the panel's
+      // gold accent (a theme apply swaps both — see applyContainerSurface /
+      // applyAccent).
+      scrollbarTrackTint: rgb(0.05, 0.05, 0.055, 1),
+      scrollbarThumbTint: rgb(0.87, 0.71, 0.36, 1),
     }),
   ], [pasteInput]);
   const pasteArea = slot("Paste Area", [rectRT(W, H, 16, 454, W - 16, 624)], [pasteViewport]);

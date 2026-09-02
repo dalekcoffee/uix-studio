@@ -66,6 +66,12 @@ export interface ScrollbarExternalBindings {
   hostSlotId: string;
 }
 
+/** Optional re-skin for the captured bar (see paintScrollbar). */
+export interface ScrollbarColors {
+  track: { r: number; g: number; b: number; a: number };
+  thumb: { r: number; g: number; b: number; a: number };
+}
+
 export interface EmittedScrollbar {
   /** "Scrollbar" slot — the visible Slider<float> + handle. Caller pins it to the edge. */
   scrollbar: Record<string, unknown>;
@@ -142,6 +148,7 @@ function transform(
 export function emitScrollbar(
   deps: ScrollbarEmitterDeps,
   bindings: ScrollbarExternalBindings,
+  colors?: ScrollbarColors,
 ): EmittedScrollbar {
   const subtrees = {
     scrollbar: TEMPLATE.Scrollbar,
@@ -178,5 +185,29 @@ export function emitScrollbar(
   out.protoFlux.ParentReference = bindings.hostSlotId;
   out.dropShadows.ParentReference = bindings.hostSlotId;
 
+  if (colors) paintScrollbar(out.scrollbar, colors);
+
   return out;
+}
+
+// Re-skin the captured bar. The capture ships the source save's own palette — a
+// slate-blue track (0.17, 0.18, 0.21) and a near-white handle — which stayed
+// blue under a warm theme because nothing repainted it. Matched by SLOT NAME so
+// it survives structural drift in the template: "Background" is the track,
+// "Handel" (sic — the captured save's spelling) is the handle.
+function paintScrollbar(scrollbar: Record<string, unknown>, colors: ScrollbarColors): void {
+  const tintOf = (c: ScrollbarColors["track"]) => [c.r, c.g, c.b, c.a, "sRGB"];
+  const visit = (node: Record<string, unknown>) => {
+    const name = (node.Name as { Data?: string } | undefined)?.Data;
+    const comps = (node.Components as { Data?: Array<{ Data?: Record<string, unknown> }> } | undefined)?.Data ?? [];
+    const paint = name === "Background" ? colors.track : name === "Handel" ? colors.thumb : null;
+    if (paint) {
+      for (const c of comps) {
+        const tint = c.Data?.Tint as { Data?: unknown } | undefined;
+        if (tint) tint.Data = tintOf(paint);
+      }
+    }
+    for (const child of (node.Children as Record<string, unknown>[] | undefined) ?? []) visit(child);
+  };
+  visit(scrollbar);
 }

@@ -407,6 +407,10 @@ export function applyAccent(root: Slot, color: Color): Slot {
   walk(r, () => true, (s) => {
     setComponentProp(s, "Slider", "fillColor", color);
     setComponentProp(s, "ProgressBar", "fillColor", color);
+    // A scroll area's grabber is the same "moving indicator" role as a slider's
+    // fill, so it rides the accent. Without this it kept the colour the captured
+    // scrollbar subtree shipped with (a slate blue) on every theme.
+    setComponentProp(s, "ScrollArea", "scrollbarThumbTint", color);
     setComponentProp(s, "Toggle", "onColor", color);
     setComponentProp(s, "Radio", "selectedColor", color);
     const spinnerImg = s.components.find(
@@ -603,6 +607,12 @@ export function applyContainerSurface(root: Slot, color: Color): Slot {
     if (isLocked(s.components.find((c) => c.type === "Image"))) return;
     setComponentProp(s, "ScrollArea", "backgroundTint", color);
     setComponentProp(s, "Image", "tint", color);
+    // The bar's TRACK is the groove its grabber runs in — a tier recessed from
+    // the scroll surface it sits on, the same relationship a slider track has to
+    // its panel. (The grabber itself rides the accent — see applyAccent.) The
+    // exported scrollbar is a captured subtree that shipped the source save's
+    // slate blue, so without this it stayed blue on every theme.
+    setComponentProp(s, "ScrollArea", "scrollbarTrackTint", frame);
   });
   return r;
 }
