@@ -1155,6 +1155,149 @@ export const useStore = create<State & Actions>((set, get) => {
     return r;
   }
 
+  // ── Hierarchy reparent placement ───────────────────────────────────────────
+  // RectTransform offsets are PARENT-RELATIVE, so moving a slot in the tree
+  // silently redefines them: the element keeps numbers authored against its OLD
+  // parent and re-resolves them against the new one, landing wherever that math
+  // happens to point — the "dragged the Loading Spinner into the Header and it
+  // sat half outside the band, on top of the close button" report. The canvas
+  // drag path never hits this (flowReparent re-lays both containers), but the
+  // Hierarchy tree can drop into ANY slot, including grouping slots that aren't
+  // registered snap containers (a header strip, a card).
+  //
+  // `keepRect` is the element's canvas-space rect BEFORE the move. Both modes
+  // re-solve the offsets from it so the element never teleports; snap mode then
+  // hands the parent to the same flow engine the canvas drag uses:
+  //   Canvas root → the element becomes its own row at the tree position and the
+  //                 page re-stacks on the row rhythm.
+  //   Other slot  → shrink it to the parent's inner box (aspect preserved) and
+  //                 re-pack: it JOINS the existing row when the parent has no
+  //                 vertical room for another one (a header/toolbar strip, where
+  //                 the siblings shrink to make space), else stacks below it.
+  function placeReparentedChild(
+    root: Slot,
+    childId: string,
+    parentId: string,
+    keepRect: Rect,
+  ): Slot {
+    const canvasSize = canvasSizeOf(root);
+    const parent = findSlot(root, parentId);
+    if (!parent) return root;
+    // A layout container (Vertical / Horizontal / Grid) positions its own
+    // children — their RectTransform is ignored, so there is nothing to solve.
+    if (getLayoutKind(parent) !== null) return root;
+    const parentAbs = computeAbsoluteRect(root, parentId, canvasSize);
+    if (!parentAbs) return root;
+
+    const isRoot = parentId === root.id;
+    const snap = get().editMode === "snap";
+    // Inner box: the page uses its authored content padding; a grouping slot
+    // gets a proportional inset (a 56px-tall header can't spare 16px a side).
+    const pad = isRoot
+      ? canvasContentPad(root)
+      : Math.min(8, Math.max(2, Math.round(Math.min(parentAbs.w, parentAbs.h) * 0.12)));
+    const innerW = Math.max(8, parentAbs.w - 2 * pad);
+    const innerH = Math.max(8, parentAbs.h - 2 * pad);
+
+    // Keep the on-screen size; snap shrinks it (never grows) to fit the parent's
+    // inner box, preserving the aspect so a square icon stays square.
+    const fit = snap ? Math.min(1, innerW / keepRect.w, innerH / keepRect.h) : 1;
+    const w = Math.max(8, Math.round(keepRect.w * fit));
+    const h = Math.max(8, Math.round(keepRect.h * fit));
+
+    const writeRect = (r: Slot, rect: Rect): Slot => {
+      const slot = findSlot(r, childId);
+      if (!slot) return r;
+      const rt = getRectTransform(slot);
+      const { offsetMin, offsetMax } = rectToOffsets(rect, parentAbs, rt.anchorMin, rt.anchorMax);
+      let out = updateComponentProp(r, childId, "RectTransform", "offsetMin", offsetMin);
+      return updateComponentProp(out, childId, "RectTransform", "offsetMax", offsetMax);
+    };
+
+    // Free mode is hand-placement: hold the element exactly where it was on
+    // screen and let the user move it. No reflow, no resize.
+    if (!snap) return writeRect(root, keepRect);
+
+    const siblings = parent.children.filter(
+      (c) => c.id !== childId && !isStructuralSlot(c) && !isPopupContentSlot(c),
+    );
+    const items: { id: string; rect: Rect }[] = [];
+    for (const sib of siblings) {
+      const r = computeAbsoluteRect(root, sib.id, canvasSize);
+      if (r) items.push({ id: sib.id, rect: r });
+    }
+    // First child of an empty parent: nothing to flow around, so centre it.
+    if (items.length === 0) {
+      return writeRect(root, {
+        x: parentAbs.x + (parentAbs.w - w) / 2,
+        y: parentAbs.y + (parentAbs.h - h) / 2,
+        w,
+        h,
+      });
+    }
+
+    // Where the tree drop put it, so the layout follows the user's ordering.
+    const order = parent.children.filter((c) => !isStructuralSlot(c) && !isPopupContentSlot(c));
+    const at = order.findIndex((c) => c.id === childId);
+    const prevId = at > 0 ? order[at - 1].id : null;
+    const nextId = at >= 0 && at + 1 < order.length ? order[at + 1].id : null;
+
+    const rows = groupRows(items);
+    const rowItems: Record<string, Rect> = {};
+    for (const it of items) rowItems[it.id] = it.rect;
+    const anchorId = prevId ?? nextId;
+    const found = rows.findIndex((r) => anchorId !== null && r.ids.includes(anchorId));
+    const rowIndex = found >= 0 ? found : rows.length - 1;
+    const anchorRow = rows[rowIndex];
+    const { rowGap, colGap } = get().snap;
+
+    // Join the row when the parent is a STRIP — one band with no room to stack
+    // another row under it (a header / toolbar). Otherwise become a new row.
+    const intoRow =
+      !isRoot && rows.length === 1 && parentAbs.h < anchorRow.height + h + rowGap + 2 * pad;
+    let colIndex = 0;
+    if (prevId && anchorRow.ids.includes(prevId)) colIndex = anchorRow.ids.indexOf(prevId) + 1;
+    else if (nextId && anchorRow.ids.includes(nextId)) colIndex = anchorRow.ids.indexOf(nextId);
+    const dropRowIndex =
+      intoRow || !(prevId && anchorRow.ids.includes(prevId)) ? rowIndex : rowIndex + 1;
+
+    // Seed the incoming rect so the engine has a size to place (x/y are only a
+    // starting point — the plan below decides where it actually lands).
+    rowItems[childId] = {
+      x: parentAbs.x + pad,
+      y: intoRow ? anchorRow.top : anchorRow.top + anchorRow.height + rowGap,
+      w,
+      h,
+    };
+
+    const result = planFlow(
+      rows,
+      rowItems,
+      [childId],
+      { intoRow, rowIndex: dropRowIndex, colIndex },
+      {
+        rowGap,
+        colGap,
+        anchorY: rows[0].top,
+        bottomMargin: APPEND_MARGIN,
+        bounds: {
+          left: parentAbs.x + (isRoot ? 0 : pad),
+          right: parentAbs.x + parentAbs.w - (isRoot ? 0 : pad),
+        },
+        // The page infers its gutter from its own wide rows (as snapReflowRoot
+        // does); a grouping slot is already inset by `pad` above.
+        sideMargin: isRoot ? undefined : 0,
+        minWidths: minWidthsFor(root, { id: parentId }, canvasSize),
+      },
+    );
+    return applyResultToContainer(
+      root,
+      { id: parentId, strategy: "absolute", isRoot, absRect: parentAbs },
+      result,
+      canvasSize,
+    );
+  }
+
   // Re-stack the Canvas root after a top-level DUPLICATE so the copy sits
   // directly below the original — never on top of it and never merged side-by-side
   // with whatever element happened to sit just below.
@@ -1458,9 +1601,32 @@ export const useStore = create<State & Actions>((set, get) => {
     clearRenaming: () => set({ renamingSlotId: null }),
 
     reparent: (id, newParentId, index) => {
+      const r0 = get().root;
       if (id === newParentId) return;
-      if (isDescendant(get().root, id, newParentId)) return;
-      commit(moveSlotTo(get().root, id, newParentId, index));
+      if (isDescendant(r0, id, newParentId)) return;
+      // Capture the on-screen rect BEFORE the move: offsets are parent-relative,
+      // so the tree move alone would silently redefine them (see
+      // placeReparentedChild).
+      const keepRect = computeAbsoluteRect(r0, id, canvasSizeOf(r0));
+      const oldParent = findParent(r0, id);
+      const changedParent = oldParent?.id !== newParentId;
+      let next = moveSlotTo(r0, id, newParentId, index);
+      // Only a move to a DIFFERENT parent needs re-placing. Re-ordering within
+      // one parent is a tree-order edit — leave the geometry alone (re-packing
+      // there would pull a member out of a side-by-side row it still belongs to).
+      if (keepRect && changedParent) next = placeReparentedChild(next, id, newParentId, keepRect);
+      // Close the gap the element left behind, exactly as a canvas flow drop
+      // does — but only for surfaces the flow engine owns (the page and the
+      // registered containers); a grouping slot keeps its hand-placed layout.
+      if (get().editMode === "snap" && oldParent && changedParent) {
+        next =
+          oldParent.id === next.id
+            ? snapReflowRoot(next)
+            : findContainer(next, oldParent.id, canvasSizeOf(next))
+              ? reflowContainerTree(next, oldParent.id)
+              : next;
+      }
+      commit(next);
     },
 
     toggleSlotLock: (id) => commit(toggleLock(get().root, id)),

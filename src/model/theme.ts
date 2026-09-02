@@ -710,7 +710,17 @@ export function applyButtonB(root: Slot, color: Color): Slot {
     // "Link Button" = the slim secondary action buttons (Forgot password / Sign
     // Up) that replaced the old non-clickable brand-blue link text. They share
     // Button B's secondary-action color so they re-skin with the theme.
-    const isNamedButtonB = lowerName === "button b" || lowerName === "link button" || lowerName === "uninstall";
+    // RESOPAL's quick-import row (two trial decks + a booster) are secondary
+    // actions beside its primary "Button A" import — same role as "Uninstall"
+    // next to "Install", so they ride Button B rather than keeping an authored
+    // dark fill that goes unreadable under a light theme.
+    const isNamedButtonB =
+      lowerName === "button b" ||
+      lowerName === "link button" ||
+      lowerName === "uninstall" ||
+      lowerName === "trial deck a" ||
+      lowerName === "trial deck b" ||
+      lowerName === "booster bp01";
     const isToolIconButton = icon === "useHelpIcon" || icon === "useCloseIcon";
     const isKeypadKey = hasButton && /^key /i.test(s.name.trim());
     if (isNamedButtonB || isToolIconButton || isKeypadKey) {

@@ -192,14 +192,32 @@ interface PopupScope {
   activeCardId: string | null;
 }
 
-// Should a container's grips be shown given the current popup-edit scope?
+// Should a grip be shown given the current popup-edit scope?
 //  - no popups in the doc        → always (unchanged behaviour)
-//  - editing a popup             → only containers inside THAT card
+//  - editing a popup             → only grips inside THAT card
 //  - not editing any popup       → everything EXCEPT popup-card subtrees
-function gripInScope(root: Slot, scope: PopupScope, containerId: string): boolean {
+// Scoping keys off the grip's MEMBERS as well as the container it belongs to: a
+// card is a nested container whose "move the whole section" grip is registered
+// on its PARENT (the Canvas root), so a container-only test lets that one leak
+// onto the main rail — the stray purple grabber beside a panel whose popup was
+// never opened. `memberIds` is optional so the scrollbar pass can still ask the
+// plain container question.
+function gripInScope(
+  root: Slot,
+  scope: PopupScope,
+  containerId: string,
+  memberIds: readonly string[] = [],
+): boolean {
   if (scope.cardIds.length === 0) return true;
+  // A grip that MOVES a card is never shown: the card only ever renders as a
+  // centered overlay while its dialog is being edited, so a rail handle for it
+  // would drag something the user cannot see (and, while editing, would drag the
+  // lifted card out of its own editing surface).
+  if (memberIds.some((id) => scope.cardIds.includes(id))) return false;
   const inCard = (cid: string) =>
-    containerId === cid || isDescendant(root, cid, containerId);
+    containerId === cid ||
+    isDescendant(root, cid, containerId) ||
+    memberIds.some((id) => id === cid || isDescendant(root, cid, id));
   if (scope.activeCardId) return inCard(scope.activeCardId);
   return !scope.cardIds.some(inCard);
 }
@@ -394,6 +412,23 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
     [layoutManaged, selectedSlot],
   );
 
+  // Resolve which popup card (if any) the selection puts us "inside", so grips
+  // can be scoped to the visible surface (the editing card, or the main canvas).
+  const popupScope = useMemo<PopupScope>(() => {
+    const cardIds = root.children
+      .filter((c) => c.components.some((cc) => cc.type === "PopupContent"))
+      .map((c) => c.id);
+    // The active (lifted) card follows the EXPLICIT edit mode, not selection — so
+    // grips stay on the main canvas until the user opens a popup for editing.
+    if (cardIds.length === 0 || !editingPopupId) return { cardIds, activeCardId: null };
+    const host = findSlot(root, editingPopupId);
+    const cid = (host?.components.find((c) => c.type === "Popup")?.props as
+      | { contentSlotId?: string }
+      | undefined)?.contentSlotId;
+    const activeCardId = cid && cardIds.includes(cid) ? cid : null;
+    return { cardIds, activeCardId };
+  }, [root, editingPopupId]);
+
   const storedRect = useMemo(
     () => (selectedId ? computeAbsoluteRect(root, selectedId, canvasSize) : null),
     [root, selectedId, canvasSize],
@@ -412,6 +447,16 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
   const overlay = useMemo(() => {
     if (!displayRect) return null;
     if (!selectedId) return { rect: displayRect, visible: true };
+    // A popup card (and everything inside it) is only DRAWN while its dialog is
+    // being edited. Selecting one from the Hierarchy otherwise would strand the
+    // box, size chip and resize handles over the panel that hides it — an
+    // overlay for an element that isn't on screen. The Inspector still edits it.
+    const selCard = popupScope.cardIds.find(
+      (cid) => cid === selectedId || isDescendant(root, cid, selectedId),
+    );
+    if (selCard && selCard !== popupScope.activeCardId) {
+      return { rect: displayRect, visible: false };
+    }
     const byId = new Map(getContainers(root, canvasSize).map((c) => [c.id, c] as const));
     let offsetY = 0;
     let band: { top: number; bottom: number } | null = null;
@@ -432,7 +477,7 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
     const cy = rect.y + rect.h / 2;
     const visible = !band || (cy >= band.top && cy <= band.bottom);
     return { rect, visible };
-  }, [displayRect, selectedId, root, canvasSize, scrollInfo]);
+  }, [displayRect, selectedId, root, canvasSize, scrollInfo, popupScope]);
   const oRect = overlay?.rect ?? null;
   const overlayVisible = !!overlay?.visible;
 
@@ -460,23 +505,6 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
     },
     [root, canvasSize],
   );
-
-  // Resolve which popup card (if any) the selection puts us "inside", so grips
-  // can be scoped to the visible surface (the editing card, or the main canvas).
-  const popupScope = useMemo<PopupScope>(() => {
-    const cardIds = root.children
-      .filter((c) => c.components.some((cc) => cc.type === "PopupContent"))
-      .map((c) => c.id);
-    // The active (lifted) card follows the EXPLICIT edit mode, not selection — so
-    // grips stay on the main canvas until the user opens a popup for editing.
-    if (cardIds.length === 0 || !editingPopupId) return { cardIds, activeCardId: null };
-    const host = findSlot(root, editingPopupId);
-    const cid = (host?.components.find((c) => c.type === "Popup")?.props as
-      | { contentSlotId?: string }
-      | undefined)?.contentSlotId;
-    const activeCardId = cid && cardIds.includes(cid) ? cid : null;
-    return { cardIds, activeCardId };
-  }, [root, editingPopupId]);
 
   // While a popup floats in the dead space, its grips should HUG the card's left
   // edge rather than sit on the canvas's left gutter (the default rail), so they
@@ -669,7 +697,7 @@ export default function DragLayer({ scale, canvasSize, popupShift }: Props) {
 
     // Scope to the visible surface: hide popup-card grips unless that popup is
     // being edited, and hide the main canvas's grips while it is.
-    return all.filter((g) => gripInScope(root, popupScope, g.containerId));
+    return all.filter((g) => gripInScope(root, popupScope, g.containerId, g.ids));
   }, [editMode, root, canvasSize, scrollInfo, popupScope]);
 
   // External purple scrollbars: one per scrollable nested container, in the
