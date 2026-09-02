@@ -4965,10 +4965,16 @@ function buildScrollAreaSlot(
       // the Canvas.contentPadding (see resolvePad).
       const padding = resolvePad(sap.padding as number | undefined, _canvasContentPadding);
       const showScrollbar      = (sap.showScrollbar as boolean) ?? true;
-      // NOTE: the ported live scrollbar (emitScrollbar) carries its own native
-      // Resonite appearance, so the legacy scrollbarTrackTint / scrollbarThumbTint
-      // / scrollbarRoundness props are not applied here. Custom scrollbar theming
-      // is a follow-up; the props remain in the schema but are currently inert.
+      // The ported live scrollbar is a subtree captured from a real save, so it
+      // arrives wearing THAT save's palette — a slate-blue track that stayed blue
+      // whatever theme the panel used. Repaint it from the ScrollArea's own
+      // track/thumb tints (which the theme drives, like a slider's track + fill).
+      // `scrollbarRoundness` is still inert — the captured bar brings its own
+      // sprite shapes.
+      const sbTrackTint = (sap.scrollbarTrackTint as { r: number; g: number; b: number; a: number })
+        ?? { r: 0.15, g: 0.17, b: 0.21, a: 1 };
+      const sbThumbTint = (sap.scrollbarThumbTint as { r: number; g: number; b: number; a: number })
+        ?? { r: 0.55, g: 0.60, b: 0.68, a: 1 };
       // Scrollbar geometry — hoisted so the content layout can reserve a gutter
       // (otherwise content runs under the bar and overlaps it).
       const trackThickness = 12;
@@ -5109,6 +5115,7 @@ function buildScrollAreaSlot(
         const emitted = emitScrollbar(
           { nextId, typeIndex: (full) => typeIndex(full) },
           { viewportRectFieldId, contentRectFieldId, contentScrollFieldId, hostSlotId: slotId },
+          { track: sbTrackTint, thumb: sbThumbTint },
         );
 
         // The captured Scrollbar root fills its parent ([0,0]-[1,1]) because the
