@@ -3142,7 +3142,10 @@ function buildResopalPanel(): Slot {
       offsetMin: { x: 98, y: 0 }, offsetMax: { x: -52, y: 0 },
       pivot: { x: 0.5, y: 0.5 },
     }),
-    c("Text", { content: "RESOPAL", size: 28, color: HDR_TEXT, horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false, themeLock: true }),
+    // No themeLock: the band rides controlSurface, so a pinned dark caption would
+    // vanish on a dark theme. Authored dark for the gold banner; the theme's
+    // header-text pass repaints it (applyHeaderText owns slots named "Title").
+    c("Text", { content: "RESOPAL", size: 28, color: HDR_TEXT, horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false }),
   ]);
   const closeBtn = makeCloseBtn(c("RectTransform", {
     anchorMin: { x: 1, y: 0.5 }, anchorMax: { x: 1, y: 0.5 },
