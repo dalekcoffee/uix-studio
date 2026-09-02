@@ -1290,8 +1290,29 @@ export const useStore = create<State & Actions>((set, get) => {
         minWidths: minWidthsFor(root, { id: parentId }, canvasSize),
       },
     );
+    // Re-anchor the newcomer to match how its new neighbours behave when the
+    // parent resizes. An element added from the palette is CENTRE-anchored, so
+    // inside a strip it drifts by HALF the delta while the icons beside it track
+    // their edges — "everything except the spinner re-adjusted" after hitting
+    // Stretch on the Header. A row member takes the parent's nearer edge with a
+    // centred vertical anchor (what every preset header authors: icon left,
+    // close right); a stacked one takes the top-left, matching how a new element
+    // is seated in a container. The page keeps its own anchors — the canvas
+    // resize path (resizeCanvasKeepingSizes) already pins top-left there.
+    const placedRect = result.rects[childId];
+    let placed = root;
+    if (!isRoot && placedRect) {
+      const anchor = intoRow
+        ? {
+            x: placedRect.x + placedRect.w / 2 - parentAbs.x < parentAbs.w / 2 ? 0 : 1,
+            y: 0.5,
+          }
+        : { x: 0, y: 1 };
+      placed = updateComponentProp(placed, childId, "RectTransform", "anchorMin", anchor);
+      placed = updateComponentProp(placed, childId, "RectTransform", "anchorMax", anchor);
+    }
     return applyResultToContainer(
-      root,
+      placed,
       { id: parentId, strategy: "absolute", isRoot, absRect: parentAbs },
       result,
       canvasSize,
