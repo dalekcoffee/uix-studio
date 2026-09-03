@@ -3077,6 +3077,8 @@ function buildResopalPanel(): Slot {
       c("Image", { tint: FIELD, preserveAspect: false, spriteUrl: "", cornerRadius: 10 }),
       c("TextField", {
         placeholder, textContent, fontSize: 13, textAlign: "Left",
+        // A request/response readout reads top-down, not centred in the box.
+        textVerticalAlign: "Top",
         textColor: TEXT, placeholderColor: MUTED, backgroundTint: FIELD,
       }),
     ]);
@@ -3208,6 +3210,10 @@ function buildResopalPanel(): Slot {
       placeholder: "Paste a palify.org deck link here…",
       textContent: "",
       fontSize: 14, textAlign: "Left",
+      // Top-aligned: the field is far taller than the viewport, so a centred
+      // single line would land halfway down the box — out of sight until you
+      // scrolled to it.
+      textVerticalAlign: "Top",
       textColor: TEXT, placeholderColor: MUTED, backgroundTint: FIELD,
     }),
   ]);

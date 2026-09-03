@@ -3365,6 +3365,10 @@ function buildTextFieldSlot(
     ?? (tfp.textColor as { r: number; g: number; b: number; a: number })
     ?? { r: 0.9, g: 0.9, b: 0.9, a: 1 };
   const textAlign   = (tfp.textAlign   as string) ?? "Left";
+  // Vertical placement of the content inside the field. Default "Middle" keeps
+  // every existing panel byte-identical; "Top" is what a tall multi-line field
+  // wants so line one sits at the top edge rather than halfway down the box.
+  const textVAlign  = (tfp.textVerticalAlign as string) ?? "Middle";
 
   // Pre-allocate the child Text slot, capturing its Text component ID.
   const textSlotId = nextId();
@@ -3376,7 +3380,7 @@ function buildTextFieldSlot(
       size: fontSize,
       color: textColor,
       horizontalAlign: textAlign as "Left" | "Center" | "Right",
-      verticalAlign: "Middle",
+      verticalAlign: textVAlign as "Top" | "Middle" | "Bottom",
       autoSize: false,
     }),
   };
@@ -3386,13 +3390,17 @@ function buildTextFieldSlot(
   const tfContentFieldId = (
     (textBuilt.Data as Record<string, unknown>).Content as { ID: string }
   ).ID;
+  // A top/bottom-aligned field gets the same breathing room from its edge that
+  // the 8px horizontal inset gives the sides; a centred one keeps its exact
+  // (unchanged) full-height rect. Y-UP: offsetMax is the top edge.
+  const vInset = 6;
   const textRtBuilt = buildComponent({
     type: "RectTransform",
     props: {
       anchorMin: { x: 0, y: 0 },
       anchorMax: { x: 1, y: 1 },
-      offsetMin: { x: 8, y: 0 },
-      offsetMax: { x: -8, y: 0 },
+      offsetMin: { x: 8, y: textVAlign === "Bottom" ? vInset : 0 },
+      offsetMax: { x: -8, y: textVAlign === "Top" ? -vInset : 0 },
       pivot: { x: 0.5, y: 0.5 },
     },
   });
