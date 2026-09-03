@@ -130,6 +130,8 @@ Font:           null  // uses Resonite default font
 
 `Materials` MUST reference a `UI_TextUnlitMaterial` asset or text is invisible.
 
+**A TALL TextField needs `textVerticalAlign: "Top"`.** The synthesized `Text` child of a TextField fills the field's whole rect, so the default `VerticalAlign: Middle` centres the content in it. That's right for a one-line input and wrong for a tall multi-line one: a single typed line lands halfway down the box — and if the field lives in a shorter scroll viewport, out of sight until the user scrolls to it. `Top` also insets the text rect 6px from the top edge, mirroring the 8px the sides already get. A UIX Text is NOT clipped to its rect either, so a tall field is also what keeps long content from spilling over the panel (see the RESOPAL paste box: a 480px field in a 170px viewport).
+
 ### UI Material — Sidedness
 Use `Sidedness: "Double"` (matches Resonite's own saves). "Front" makes the back invisible / transparent which users don't want.
 

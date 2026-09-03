@@ -1110,10 +1110,17 @@ function TextFieldPreview({ props, radius = 3 }: { props: any; radius?: number }
   const hasContent = content.length > 0;
   const displayText = hasContent ? content : String(props.placeholder ?? "");
   const justify = textAlign === "Center" ? "center" : textAlign === "Right" ? "flex-end" : "flex-start";
+  // Mirrors the export: a tall field set to Top shows line one at the top edge
+  // (with the same 6px inset the exporter gives it), not floating mid-box.
+  const vAlign = (props.textVerticalAlign as string) ?? "Middle";
+  const align = vAlign === "Top" ? "flex-start" : vAlign === "Bottom" ? "flex-end" : "center";
   return (
     <div
-      className="pointer-events-none absolute inset-0 flex items-center overflow-hidden px-3"
+      className="pointer-events-none absolute inset-0 flex overflow-hidden px-3"
       style={{
+        alignItems: align,
+        paddingTop: vAlign === "Top" ? 6 : 0,
+        paddingBottom: vAlign === "Bottom" ? 6 : 0,
         background: colorToCss(bg),
         border: "1px solid rgba(148,163,184,0.25)",
         borderRadius: radius,

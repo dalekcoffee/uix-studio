@@ -177,6 +177,12 @@ const textFieldSchema = z.object({
   backgroundTint: color.default({ r: 0.12, g: 0.12, b: 0.12, a: 1 }),
   fieldType: z.enum(["text", "float", "int"]).default("text"),
   textAlign: z.enum(["Left", "Center", "Right"]).default("Left"),
+  // Where the content sits vertically in the field. "Middle" (the default,
+  // matching a one-line input) centres it; a TALL multi-line field wants "Top"
+  // so the first line is at the top edge instead of floating halfway down —
+  // otherwise a single typed line lands in the middle of a tall box and can sit
+  // outside a scroll viewport entirely.
+  textVerticalAlign: z.enum(["Top", "Middle", "Bottom"]).default("Middle"),
   // Float display rounding — digits shown after the decimal point. Default 2 so a
   // driven value (e.g. a slider feeding a float field) shows "0.48" instead of
   // overflowing the box with "0.4807973…". Only the float parser reads it.
@@ -796,6 +802,16 @@ export const FIELD_DESCRIPTORS: Record<UixComponentType, readonly FieldDescripto
     { key: "placeholder", label: "Placeholder", kind: "string" },
     { key: "textContent", label: "Default Content", kind: "string" },
     { key: "fontSize", label: "Font Size", kind: "number" },
+    // Where the content sits in a TALL field: "Top" keeps line one at the top
+    // edge (a centred line in a tall box floats halfway down, out of a scroll
+    // viewport entirely). Horizontal alignment lives on the control's own
+    // "Text Align" row in the widget section.
+    {
+      key: "textVerticalAlign",
+      label: "V Align",
+      kind: "enum",
+      options: ["Top", "Middle", "Bottom"],
+    },
     { key: "textColor", label: "Text Color", kind: "color" },
     { key: "placeholderColor", label: "Placeholder Color", kind: "color" },
     { key: "backgroundTint", label: "Background Tint", kind: "color" },
