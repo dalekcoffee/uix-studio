@@ -47,10 +47,10 @@ const PRESET_TEXT: Record<string, Record<Target, string>> = {
     ja: "消費したソウルはグレーになりますがプールには残ります — 消費をリセットするとすべて戻ります。",
   },
   "STATES": { ko: "상태", es: "ESTADOS", ja: "状態" },
-  "The souls row is a readout of the two counters under it. Show a pip's Available layer while spent < i <= available, its Spent layer while i <= spent, and leave both off past the pool. Reset spent zeroes the SPENT count.": {
-    ko: "소울 행은 아래 두 카운터를 그대로 보여주는 표시입니다. spent < i <= available 인 동안 해당 소울의 Available 레이어를, i <= spent 인 동안 Spent 레이어를 켜고, 풀을 넘어가면 둘 다 끕니다. 소모 초기화는 SPENT 값을 0으로 만듭니다.",
-    es: "La fila de almas es una lectura de los dos contadores de abajo. Muestra la capa Available de una ficha mientras gastadas < i <= disponibles, su capa Spent mientras i <= gastadas, y deja ambas apagadas más allá de la reserva. Reiniciar gastadas pone el contador SPENT a cero.",
-    ja: "ソウルの行は下の2つのカウンターを映す表示です。spent < i <= available の間はそのソウルの Available レイヤーを、i <= spent の間は Spent レイヤーをオンにし、プールを超えたら両方オフにします。消費のリセットは SPENT を0にします。",
+  "The souls row is a readout of the two counters under it. Each pip is one Image — drive its Tint: purple while spent < i <= available, grey while i <= spent, dark past the pool. Reset spent zeroes the SPENT count.": {
+    ko: "소울 행은 아래 두 카운터를 그대로 보여주는 표시입니다. 소울 하나는 Image 하나이므로 Tint를 구동하세요 — spent < i <= available 이면 보라, i <= spent 이면 회색, 풀을 넘어가면 어두운 색. 소모 초기화는 SPENT 값을 0으로 만듭니다.",
+    es: "La fila de almas es una lectura de los dos contadores de abajo. Cada ficha es una sola Image — controla su Tint: morado mientras gastadas < i <= disponibles, gris mientras i <= gastadas, oscuro más allá de la reserva. Reiniciar gastadas pone el contador SPENT a cero.",
+    ja: "ソウルの行は下の2つのカウンターを映す表示です。ソウル1つは Image 1つなので Tint を駆動してください — spent < i <= available なら紫、i <= spent ならグレー、プールを超えたら暗い色。消費のリセットは SPENT を0にします。",
   },
   "WIRING": { ko: "연결", es: "CONEXIÓN", ja: "配線" },
   "• Art\n• Games\n• Just chatting\n• Other ...": {

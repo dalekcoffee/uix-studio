@@ -11,6 +11,7 @@ import { collectCustomImageHashes, exportBrsonFile, CREDITS_BACKDROP_ASPECT } fr
 import { getImage } from "./imageStore";
 import { bakeBackgroundImage, bakeRoundedRectMask, type BakeMode } from "./bakeBackground";
 import { findBackgroundSlots } from "../model/background";
+import { presetArtFor } from "../model/presetArt";
 import type { UixDocument } from "../model/types";
 
 const FONT_HASH = "8c1dc004996029f804283dd398ca2a05d4d33ebcba5c0d25ea13fd2026572279";
@@ -264,12 +265,23 @@ export async function exportBundleZip(
       continue;
     }
     const stored = await getImage(hash);
-    if (!stored) {
-      throw new Error(
-        `Custom image ${hash.slice(0, 8)}… is referenced but missing from local storage. Re-upload it before exporting.`,
-      );
+    if (stored) {
+      customAssets.push({ hash, bytes: stored.bytes });
+      continue;
     }
-    customAssets.push({ hash, bytes: stored.bytes });
+    // Artwork a preset ships with (model/presetArt.ts) is served from the app's
+    // own publicDir, so it can always be re-fetched — the store copy is just a
+    // cache for the preview. Without this, exporting a freshly-loaded preset in
+    // a browser whose hydration hadn't finished (or had been cleared) would
+    // fail on artwork the user never uploaded and can't re-upload.
+    const art = presetArtFor(hash);
+    if (art) {
+      customAssets.push({ hash, bytes: await fetchAsset(art.url) });
+      continue;
+    }
+    throw new Error(
+      `Custom image ${hash.slice(0, 8)}… is referenced but missing from local storage. Re-upload it before exporting.`,
+    );
   }
 
   const brsonBlob = await exportBrsonFile(work, { creditsBackdropTexHash: creditsBackdrop?.hash });

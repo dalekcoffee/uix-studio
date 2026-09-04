@@ -2,6 +2,7 @@ import type { Slot, UixComponent } from "./types";
 import { createStarterTemplate } from "./template";
 import { isStructuralName } from "./structural";
 import { buildBackgroundTrio } from "./background";
+import { PRESET_ART } from "./presetArt";
 import type { Lang } from "../locale/types";
 import { v4 as uuid } from "uuid";
 
@@ -137,6 +138,18 @@ function makeLinkButton(
     c("Button", { normalColor: fill, highlightColor: fillHi, pressColor: fillLo, disabledColor: rgb(0.5, 0.5, 0.5), hoverVibrate: false }),
   ], [lbl]);
 }
+
+// Preset-shipped artwork, looked up by name so a stale hash in presetArt.ts
+// throws here at module load rather than silently dangling as a missing image
+// in a panel. See model/presetArt.ts for how these get bundled.
+function art(name: string): string {
+  const found = PRESET_ART.find((a) => a.name === name);
+  if (!found) throw new Error(`Unknown preset art: ${name}`);
+  return found.hash;
+}
+const ART_LIFE       = art("Life (RESOPAL)");
+const ART_MATERIAL   = art("Material (RESOPAL)");
+const ART_INGREDIENT = art("Ingredient (RESOPAL)");
 
 // ── Presets ───────────────────────────────────────────────────────────────────
 
@@ -3294,16 +3307,17 @@ function buildResopalPanel(): Slot {
 // been the one thing on the panel that changed state on its own, and "tap a soul
 // to un-spend it" is not a gesture the game has.)
 //
-// A soul is an IMAGE, not a number, and each of the ten pips stacks three plain
-// layers so it can show all three states the game needs:
+// A soul is an IMAGE, not a number. Each of the ten pips is ONE slot with ONE
+// Image — deliberately not a stack of show/hide layers. All three states the
+// game needs are just that Image's Tint, so wiring the readout is ten colorX
+// drives and nothing else:
 //
-//   Soul N        dark "locked" base   — a soul you have not earned yet
-//   └ Available N purple fill          — earned and unspent
-//     └ Spent N   grey fill            — consumed, but still IN the pool
+//   dark  rgb(0.105, 0.105, 0.145)  — not earned yet
+//   purple rgb(0.49, 0.32, 0.84)    — earned and unspent
+//   grey  rgb(0.27, 0.26, 0.32)     — consumed, but still IN the pool
 //
-// Every pip is structurally identical, so the whole readout is Active drives:
-// show Available 1…n for a pool of n, and Spent 1…k for k consumed. "Reset
-// spent" zeroes the SPENT count and hides all ten Spent layers.
+// Authored purple, so dropping in custom soul art is the same image ten times.
+// "Reset spent" zeroes the SPENT count and repaints every spent pip purple.
 function buildResopalCounterBuddy(): Slot {
   const W = 560;
   const H = 710;
@@ -3386,17 +3400,21 @@ function buildResopalCounterBuddy(): Slot {
   // The caption child MUST stay named "Label": that's what makes the row the
   // value wrapper, so the Count field exports as a dynamic variable called
   // "LIFE" / "MATERIAL" / … instead of the generic slot name.
-  function counterRow(name: string, caption: string, top: number, value: number, captionColor = MUTED): Slot {
+  //
+  // `artHash` is a piece of preset-shipped artwork (see model/presetArt.ts) —
+  // the three resource markers carry one; the two soul rows pass "" and get the
+  // drop-your-own-image placeholder instead.
+  function counterRow(name: string, caption: string, top: number, value: number, artHash = "", captionColor = MUTED): Slot {
+    const icon = artHash
+      ? c("Image", { tint: rgb(1, 1, 1), preserveAspect: true, spriteUrl: "", customImageHash: artHash, placeholderRemoved: true, cornerRadius: 0 })
+      : c("Image", { tint: rgb(1, 1, 1), preserveAspect: true, spriteUrl: "", useImagePlaceholder: true, cornerRadius: 12 });
     return slot(name, [
       rectRT(W, H, 16, top, W - 16, top + 64),
       c("Image", { tint: CARD, preserveAspect: false, spriteUrl: "", cornerRadius: 14 }),
     ], [
       stepButton("Minus", wL(8, 56, 48), "−"),
-      // Drop your own resource art here — placeholder until you do.
-      slot("Icon", [
-        wL(76, 40, 40),
-        c("Image", { tint: rgb(1, 1, 1), preserveAspect: true, spriteUrl: "", useImagePlaceholder: true, cornerRadius: 12 }),
-      ]),
+      // The resource marker. Swap it for your own art from the Inspector.
+      slot("Icon", [wL(76, 40, 40), icon]),
       slot("Label", [
         wSpan(128, 200, 28),
         c("Text", { content: caption, size: 16, color: captionColor, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
@@ -3425,30 +3443,15 @@ function buildResopalCounterBuddy(): Slot {
   // ── Soul pip ────────────────────────────────────────────────────────────────
   const PIP_W = 34, PIP_H = 44, PIP_GAP = 8;
   const MAX_SOULS = 10;
-  // Authored demo state: a full pool with nothing spent yet, which is what the
-  // "10 / 10" readout reflects. The editor has no per-slot Active, so every
-  // layer it can draw IS drawn — meaning the only state it can show honestly is
-  // "all ten earned and unspent". The dialog's STATES legend covers the other
-  // two looks. Nothing about a pip is baked to a position in the row.
+  // Authored state: a full pool with nothing spent, matching the "10 / 10"
+  // readout. Nothing about a pip is baked to a position in the row — they are
+  // ten identical shapes, and which colour each one wears is entirely up to
+  // whatever drives its Tint.
   const SPENT_AT_START = 0;
   function soulPip(i: number): Slot {
     return slot(`Soul ${i}`, [
       wL((i - 1) * (PIP_W + PIP_GAP), PIP_W, PIP_H),
-      c("Image", { tint: SOUL_DARK, preserveAspect: false, spriteUrl: "", cornerRadius: 30, themeLock: true }),
-    ], [
-      // Grey "consumed" fill. Active for the first `spent` souls.
-      slot(`Spent ${i}`, [
-        fillRT(),
-        c("Image", { tint: SOUL_USED, preserveAspect: false, spriteUrl: "", cornerRadius: 30, themeLock: true }),
-      ]),
-      // Purple "earned and unspent" fill, on top of the grey — Active for
-      // spent < i <= available. Deactivate it and the grey (or, past the pool,
-      // the dark base) shows through. Drop your own soul art on THIS layer:
-      // all ten are identical, so it's the same image ten times.
-      slot(`Available ${i}`, [
-        fillRT(),
-        c("Image", { tint: SOUL_LIT, preserveAspect: false, spriteUrl: "", cornerRadius: 30, themeLock: true }),
-      ]),
+      c("Image", { tint: SOUL_LIT, preserveAspect: false, spriteUrl: "", cornerRadius: 30, themeLock: true }),
     ]);
   }
 
@@ -3506,7 +3509,7 @@ function buildResopalCounterBuddy(): Slot {
       pl(16, 318, ABOUT_W - 32, 56),
       c("Text", {
         content:
-          "The souls row is a readout of the two counters under it. Show a pip's Available layer while spent < i <= available, its Spent layer while i <= spent, and leave both off past the pool. Reset spent zeroes the SPENT count.",
+          "The souls row is a readout of the two counters under it. Each pip is one Image — drive its Tint: purple while spent < i <= available, grey while i <= spent, dark past the pool. Reset spent zeroes the SPENT count.",
         size: 12, color: MUTED, horizontalAlign: "Left", verticalAlign: "Top", autoSize: false,
       }),
     ]),
@@ -3560,9 +3563,9 @@ function buildResopalCounterBuddy(): Slot {
       c("Text", { content: "RESOURCES", size: 13, color: GOLD, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
     ]),
   ]);
-  const lifeRow       = counterRow("Life Counter",       "LIFE",       124, 10);
-  const materialRow   = counterRow("Material Counter",   "MATERIAL",   200, 0);
-  const ingredientRow = counterRow("Ingredient Counter", "INGREDIENT", 276, 3);
+  const lifeRow       = counterRow("Life Counter",       "LIFE",       124, 10, ART_LIFE);
+  const materialRow   = counterRow("Material Counter",   "MATERIAL",   200, 0,  ART_MATERIAL);
+  const ingredientRow = counterRow("Ingredient Counter", "INGREDIENT", 276, 3,  ART_INGREDIENT);
 
   // Section break. Snap mode reflows top-level rows onto one uniform gap, so the
   // extra air between the two halves has to be a real element rather than a
@@ -3612,8 +3615,8 @@ function buildResopalCounterBuddy(): Slot {
   // The two numeric halves of the souls tracker — same row shape as the three
   // resource counters above, tinted with the soul purple so they read as one
   // block with the pips.
-  const availableRow = counterRow("Available Counter", "AVAILABLE", 516, MAX_SOULS, SOUL_TEXT);
-  const spentRow     = counterRow("Spent Counter",     "SPENT",     592, SPENT_AT_START, SOUL_TEXT);
+  const availableRow = counterRow("Available Counter", "AVAILABLE", 516, MAX_SOULS,      "", SOUL_TEXT);
+  const spentRow     = counterRow("Spent Counter",     "SPENT",     592, SPENT_AT_START, "", SOUL_TEXT);
 
   const footer = slot("Footer", [
     rectRT(W, H, 16, 668, W - 16, 694),
@@ -3676,7 +3679,7 @@ export const BUILTIN_PRESETS: readonly PresetDescriptor[] = [
     id: "resopal-counter-buddy",
     name: "RESOPAL — Counter Buddy",
     description:
-      "Palworld TCG turn tracker in two ruled sections. RESOURCES: three −/+ counters (Life, Material, Ingredient) with drop-your-own icon tiles and typeable int fields. SOULS: a row of ten purple card pips reading out an AVAILABLE / SPENT counter pair below it, plus a Reset spent pill and a remaining-of-pool figure. Each pip stacks a dark not-earned base, a grey Spent fill, and a purple Available fill on top — all ten identical, so it's the same soul art ten times and two Active drives per pip. The ⓘ dialog carries the 1/2-then-+2-per-turn soul rules, a legend of the three pip states, and the ProtoFlux hooks.",
+      "Palworld TCG turn tracker in two ruled sections. RESOURCES: three −/+ counters — Life, Material and Ingredient, each with its own bundled resource marker and a typeable int field that exports as a named dynamic variable. SOULS: a row of ten purple card pips reading out an AVAILABLE / SPENT counter pair below it, plus a Reset spent pill and a remaining-of-pool figure. A pip is one shape with one colour, not a stack of layers, so the whole readout is ten Tint drives — purple earned, grey spent, dark not earned yet. The ⓘ dialog carries the 1/2-then-+2-per-turn soul rules, a legend of the three colours, and the wiring notes.",
     category: "dialog",
     build: buildResopalCounterBuddy,
   },
