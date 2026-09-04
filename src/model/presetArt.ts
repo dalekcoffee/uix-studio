@@ -1,11 +1,11 @@
-// Artwork a PRESET ships with — game-specific graphics that belong to one panel
+// Artwork a PRESET ships with - game-specific graphics that belong to one panel
 // rather than to the editor's UI vocabulary.
 //
 // Why this is not `uiIcons.ts` / `systemIcons.ts`: those two lists are the
 // editor's own furniture (help, close, checkmark, spinner…), offered to every
 // panel from the Inspector's picker and, for the system set, plumbed through
 // dedicated `useXxxIcon` exporter flags. A Palworld resource marker is neither
-// — it's content, and putting it in the global picker would be clutter.
+// - it's content, and putting it in the global picker would be clutter.
 //
 // So preset art rides the ordinary `customImageHash` path instead: the PNG
 // lives in the Vite publicDir (`Images/PresetArt/`), a preset references it by
@@ -13,11 +13,11 @@
 // .resonitepackage exactly like a user upload. Nothing in the exporter needs to
 // know these exist.
 //
-// The hash IS the file's content hash — regenerate it (`sha256sum` over the
+// The hash IS the file's content hash - regenerate it (`sha256sum` over the
 // PNG) if the artwork ever changes, or the reference dangles and the panel
 // shows the editor's "image missing" warning.
 export interface PresetArt {
-  /** SHA-256 of the PNG bytes — what a preset puts in `Image.customImageHash`. */
+  /** SHA-256 of the PNG bytes - what a preset puts in `Image.customImageHash`. */
   hash: string;
   /** URL relative to the app base (publicDir = Images). */
   url: string;

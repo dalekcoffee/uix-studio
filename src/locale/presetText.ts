@@ -41,10 +41,10 @@ const PRESET_TEXT: Record<string, Record<Target, string>> = {
   },
   "SPENT": { ko: "소모", es: "GASTADAS", ja: "消費" },
   "Spent": { ko: "소모됨", es: "Gastada", ja: "消費済み" },
-  "Spent souls grey out but stay in your pool — Reset spent lights them all again.": {
-    ko: "소모된 소울은 회색이 되지만 풀에는 남습니다 — 소모 초기화를 누르면 전부 다시 켜집니다.",
-    es: "Las almas gastadas se vuelven grises pero siguen en tu reserva — Reiniciar gastadas las enciende todas de nuevo.",
-    ja: "消費したソウルはグレーになりますがプールには残ります — 消費をリセットするとすべて戻ります。",
+  "Spent souls grey out but stay in your pool - Reset spent lights them all again.": {
+    ko: "소모된 소울은 회색이 되지만 풀에는 남습니다 - 소모 초기화를 누르면 전부 다시 켜집니다.",
+    es: "Las almas gastadas se vuelven grises pero siguen en tu reserva - Reiniciar gastadas las enciende todas de nuevo.",
+    ja: "消費したソウルはグレーになりますがプールには残ります - 消費をリセットするとすべて戻ります。",
   },
   "STATES": { ko: "상태", es: "ESTADOS", ja: "状態" },
   "• Art\n• Games\n• Just chatting\n• Other ...": {
