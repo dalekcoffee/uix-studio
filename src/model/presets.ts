@@ -3168,10 +3168,30 @@ function buildResopalPanel(): Slot {
     offsetMin: { x: -46, y: -18 }, offsetMax: { x: -10, y: 18 },
     pivot: { x: 0.5, y: 0.5 },
   }));
+  // matchPanelCorners rounds all FOUR corners, which is right at the top (they
+  // trace the panel's silhouette) and wrong at the bottom (the bar butts onto
+  // the body, so a curve there just exposes the backdrop). The flagship
+  // template gets away with it because its header is dark-on-dark; a gold bar
+  // on near-black shows every pixel. So a square filler plugs the bottom half
+  // back to a straight edge — same trick the stylized-login "Seam Filler" uses.
+  // Full-width but inset from the panel's top corner arc, so it has no panel
+  // corner of its own to square off against.
+  const headerFiller = slot("Header Filler", [
+    c("RectTransform", {
+      anchorMin: { x: 0, y: 0 }, anchorMax: { x: 1, y: 0 },
+      offsetMin: { x: 0, y: 0 }, offsetMax: { x: 0, y: 28 },
+      pivot: { x: 0.5, y: 0.5 },
+    }),
+    c("Image", { tint: HDR_GOLD, preserveAspect: false, spriteUrl: "" }),
+  ]);
+  headerFiller.structural = true; // panel chrome — exempt from the empty-image warning
   const header = slot("Header", [
     rectRT(W, H, 0, 0, W, 56),
-    c("Image", { tint: HDR_GOLD, preserveAspect: false, spriteUrl: "", cornerRadius: 30 }),
-  ], [infoBtn, headerLogo, headerTitle, closeBtn]);
+    // matchPanelCorners — cornerRadius is proportional to the element's own
+    // size, so on a full-width 56px bar it gave a ~8px corner against the
+    // panel's 28px and the gold squared off outside the panel silhouette.
+    c("Image", { tint: HDR_GOLD, preserveAspect: false, spriteUrl: "", cornerRadius: 30, matchPanelCorners: true }),
+  ], [headerFiller, infoBtn, headerLogo, headerTitle, closeBtn]);
 
   // ── Body ────────────────────────────────────────────────────────────────────
   const description = slot("Description", [
@@ -3293,28 +3313,28 @@ function buildResopalPanel(): Slot {
   ]);
 }
 
-// ── RESOPAL — Counter Buddy (Palworld TCG turn tracker) ──────────────────────
+// ── RESOPAL - Counter Buddy (Palworld TCG turn tracker) ──────────────────────
 // The play-side companion to the deck-import console. Two sections separated by
 // a ruled divider: RESOURCES (Life / Material / Ingredient) and SOULS.
 //
-// EVERY control here is a −/+ counter of the same shape — [−] icon LABEL [n] [+]
-// — whose number is a real int TextField, so the row exports a named int dynamic
+// EVERY control here is a −/+ counter of the same shape - [−] icon LABEL [n] [+]
+// - whose number is a real int TextField, so the row exports a named int dynamic
 // variable (taken from the row's "Label" text) for ProtoFlux to read and write.
 // One input idiom, no exceptions: the ten soul pips are a pure READOUT of the
 // AVAILABLE and SPENT counters beneath them, not a second way to change them.
 // (Nothing in the editor's vocabulary increments an int on click, so the ±
-// buttons are ProtoFlux hooks too — making the pips tappable as well would have
+// buttons are ProtoFlux hooks too - making the pips tappable as well would have
 // been the one thing on the panel that changed state on its own, and "tap a soul
 // to un-spend it" is not a gesture the game has.)
 //
 // A soul is an IMAGE, not a number. Each of the ten pips is ONE slot with ONE
-// Image — deliberately not a stack of show/hide layers. All three states the
+// Image - deliberately not a stack of show/hide layers. All three states the
 // game needs are just that Image's Tint, so wiring the readout is ten colorX
 // drives and nothing else:
 //
-//   dark  rgb(0.105, 0.105, 0.145)  — not earned yet
-//   purple rgb(0.49, 0.32, 0.84)    — earned and unspent
-//   grey  rgb(0.27, 0.26, 0.32)     — consumed, but still IN the pool
+//   dark  rgb(0.105, 0.105, 0.145)  - not earned yet
+//   purple rgb(0.49, 0.32, 0.84)    - earned and unspent
+//   grey  rgb(0.27, 0.26, 0.32)     - consumed, but still IN the pool
 //
 // Authored purple, so dropping in custom soul art is the same image ten times.
 // "Reset spent" zeroes the SPENT count and repaints every spent pip purple.
@@ -3334,10 +3354,10 @@ function buildResopalCounterBuddy(): Slot {
   const TEXT      = rgb(0.92,  0.92,  0.93);
   const MUTED     = rgb(0.55,  0.56,  0.60);
   const GOLD      = rgb(0.87,  0.71,  0.36);
-  // Soul pip palette. themeLock'd everywhere it appears — purple/gray/dark are
+  // Soul pip palette. themeLock'd everywhere it appears - purple/gray/dark are
   // the game's own state coding, not decoration, so a theme switch must not
   // repaint them into something that no longer reads as "spent".
-  const SOUL_DARK = rgb(0.105, 0.105, 0.145);  // locked  — not earned yet
+  const SOUL_DARK = rgb(0.105, 0.105, 0.145);  // locked  - not earned yet
   const SOUL_LIT  = rgb(0.49,  0.32,  0.84);   // available
   const SOUL_USED = rgb(0.27,  0.26,  0.32);   // spent
   const SOUL_TEXT = rgb(0.65,  0.52,  0.92);   // the "10 / 10" readout
@@ -3367,7 +3387,7 @@ function buildResopalCounterBuddy(): Slot {
       offsetMin: { x: left, y: -h / 2 }, offsetMax: { x: -right, y: h / 2 },
       pivot: { x: 0.5, y: 0.5 },
     });
-  // Fixed box measured in px from the PARENT's top-left corner (Y downward) —
+  // Fixed box measured in px from the PARENT's top-left corner (Y downward) -
   // used inside the dialog card, which isn't canvas-sized.
   const pl = (left: number, top: number, w: number, h: number): UixComponent =>
     c("RectTransform", {
@@ -3401,26 +3421,21 @@ function buildResopalCounterBuddy(): Slot {
   // value wrapper, so the Count field exports as a dynamic variable called
   // "LIFE" / "MATERIAL" / … instead of the generic slot name.
   //
-  // `artHash` is a piece of preset-shipped artwork (see model/presetArt.ts) —
-  // the three resource markers carry one; the two soul rows pass "" and get the
-  // drop-your-own-image placeholder instead.
-  function counterRow(name: string, caption: string, top: number, value: number, artHash = "", captionColor = MUTED): Slot {
-    const icon = artHash
-      ? c("Image", { tint: rgb(1, 1, 1), preserveAspect: true, spriteUrl: "", customImageHash: artHash, placeholderRemoved: true, cornerRadius: 0 })
-      : c("Image", { tint: rgb(1, 1, 1), preserveAspect: true, spriteUrl: "", useImagePlaceholder: true, cornerRadius: 12 });
+  // `icon` is the row's marker slot: artIcon() for the three resource rows,
+  // soulIcon() for the two that count souls.
+  function counterRow(name: string, caption: string, top: number, value: number, icon: Slot, captionColor = MUTED): Slot {
     return slot(name, [
       rectRT(W, H, 16, top, W - 16, top + 64),
       c("Image", { tint: CARD, preserveAspect: false, spriteUrl: "", cornerRadius: 14 }),
     ], [
       stepButton("Minus", wL(8, 56, 48), "−"),
-      // The resource marker. Swap it for your own art from the Inspector.
-      slot("Icon", [wL(76, 40, 40), icon]),
+      icon,
       slot("Label", [
         wSpan(128, 200, 28),
         c("Text", { content: caption, size: 16, color: captionColor, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
       ]),
       // A real int field, so the count is typeable in-game and readable from
-      // ProtoFlux — not a static Text that only a driver can change.
+      // ProtoFlux - not a static Text that only a driver can change.
       slot("Count", [
         wR(72, 100, 44),
         c("Image", { tint: FIELD, preserveAspect: false, spriteUrl: "", cornerRadius: 10 }),
@@ -3435,16 +3450,37 @@ function buildResopalCounterBuddy(): Slot {
   }
 
   // A section caption strip. 40px tall so RESOURCES and SOULS sit on the same
-  // rhythm — SOULS needs the height for its reset pill.
+  // rhythm - SOULS needs the height for its reset pill.
   function sectionStrip(name: string, top: number, children: Slot[]): Slot {
     return slot(name, [rectRT(W, H, 16, top, W - 16, top + 40)], children);
+  }
+
+  // A bundled resource marker (see model/presetArt.ts). Swap it for your own art
+  // from the Inspector.
+  function artIcon(hash: string): Slot {
+    return slot("Icon", [
+      wL(76, 40, 40),
+      c("Image", { tint: rgb(1, 1, 1), preserveAspect: true, spriteUrl: "", customImageHash: hash, placeholderRemoved: true, cornerRadius: 0 }),
+    ]);
+  }
+
+  // A soul tile, for the two rows that count souls: the same rounded card as a
+  // pip in the same colour, so AVAILABLE and SPENT are self-labelling. No
+  // artwork to bundle - a pip is only ever a shape and a tint (see soulPip), so
+  // this is literally that shape again, at the pip's aspect scaled to the 40px
+  // icon column.
+  function soulIcon(tint: ReturnType<typeof rgb>): Slot {
+    return slot("Icon", [
+      wL(80, 31, 40),
+      c("Image", { tint, preserveAspect: false, spriteUrl: "", cornerRadius: 30, themeLock: true }),
+    ]);
   }
 
   // ── Soul pip ────────────────────────────────────────────────────────────────
   const PIP_W = 34, PIP_H = 44, PIP_GAP = 8;
   const MAX_SOULS = 10;
   // Authored state: a full pool with nothing spent, matching the "10 / 10"
-  // readout. Nothing about a pip is baked to a position in the row — they are
+  // readout. Nothing about a pip is baked to a position in the row - they are
   // ten identical shapes, and which colour each one wears is entirely up to
   // whatever drives its Tint.
   const SPENT_AT_START = 0;
@@ -3456,9 +3492,9 @@ function buildResopalCounterBuddy(): Slot {
   }
 
   // ── How-souls-work dialog (opened by the header's ⓘ) ────────────────────────
-  const ABOUT_W = 480, ABOUT_H = 438;
+  const ABOUT_W = 480, ABOUT_H = 348;
   // The editor can only draw one pip state (see soulPip), so the card carries a
-  // legend of all three. These are plain swatches — no layers, no wiring.
+  // legend of all three. These are plain swatches - no layers, no wiring.
   function legendPip(name: string, left: number, tint: ReturnType<typeof rgb>, caption: string): Slot {
     return slot(name, [pl(left, 8, 26, 36), c("Image", { tint, preserveAspect: false, spriteUrl: "", cornerRadius: 30, themeLock: true })], [
       slot("Caption", [
@@ -3501,20 +3537,8 @@ function buildResopalCounterBuddy(): Slot {
       legendPip("Legend Available", 155, SOUL_LIT,  "Available"),
       legendPip("Legend Spent",     310, SOUL_USED, "Spent"),
     ]),
-    slot("Wiring Label", [
-      pl(16, 296, ABOUT_W - 32, 18),
-      c("Text", { content: "WIRING", size: 11, color: GOLD, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
-    ]),
-    slot("Wiring Body", [
-      pl(16, 318, ABOUT_W - 32, 56),
-      c("Text", {
-        content:
-          "The souls row is a readout of the two counters under it. Each pip is one Image — drive its Tint: purple while spent < i <= available, grey while i <= spent, dark past the pool. Reset spent zeroes the SPENT count.",
-        size: 12, color: MUTED, horizontalAlign: "Left", verticalAlign: "Top", autoSize: false,
-      }),
-    ]),
     slot("Dismiss", [
-      pl((ABOUT_W - 112) / 2, 384, 112, 36),
+      pl((ABOUT_W - 112) / 2, 296, 112, 36),
       c("Image", { tint: rgb(0.18, 0.36, 0.60), preserveAspect: false, spriteUrl: "", cornerRadius: 8 }),
       c("Button", { normalColor: rgb(0.18, 0.36, 0.60), highlightColor: rgb(0.26, 0.46, 0.72), pressColor: rgb(0.12, 0.26, 0.44), disabledColor: rgb(0.3, 0.3, 0.3), hoverVibrate: false }),
       c("PopupDismiss", {}),
@@ -3551,10 +3575,31 @@ function buildResopalCounterBuddy(): Slot {
     offsetMin: { x: -46, y: -18 }, offsetMax: { x: -10, y: 18 },
     pivot: { x: 0.5, y: 0.5 },
   }));
+  // matchPanelCorners rounds all FOUR corners, which is right at the top (they
+  // trace the panel's silhouette) and wrong at the bottom (the bar butts onto
+  // the body, so a curve there just exposes the backdrop). The flagship
+  // template gets away with it because its header is dark-on-dark; a gold bar
+  // on near-black shows every pixel. So a square filler plugs the bottom half
+  // back to a straight edge - same trick the stylized-login "Seam Filler" uses.
+  // Full-width but inset from the panel's top corner arc, so it has no panel
+  // corner of its own to square off against.
+  const headerFiller = slot("Header Filler", [
+    c("RectTransform", {
+      anchorMin: { x: 0, y: 0 }, anchorMax: { x: 1, y: 0 },
+      offsetMin: { x: 0, y: 0 }, offsetMax: { x: 0, y: 28 },
+      pivot: { x: 0.5, y: 0.5 },
+    }),
+    c("Image", { tint: HDR_GOLD, preserveAspect: false, spriteUrl: "" }),
+  ]);
+  headerFiller.structural = true; // panel chrome - exempt from the empty-image warning
   const header = slot("Header", [
     rectRT(W, H, 0, 0, W, 56),
-    c("Image", { tint: HDR_GOLD, preserveAspect: false, spriteUrl: "", cornerRadius: 30 }),
-  ], [infoBtn, headerTitle, closeBtn]);
+    // matchPanelCorners, not a proportional radius: cornerRadius is relative to
+    // the element's own size, and on a 560×56 bar that's a ~8px corner against
+    // the panel's 28px - so the gold squared off outside the panel's silhouette
+    // and, being double-sided, showed from behind.
+    c("Image", { tint: HDR_GOLD, preserveAspect: false, spriteUrl: "", cornerRadius: 30, matchPanelCorners: true }),
+  ], [headerFiller, infoBtn, headerTitle, closeBtn]);
 
   // ── Body ────────────────────────────────────────────────────────────────────
   const resourcesHeader = sectionStrip("Resources Header", 72, [
@@ -3563,9 +3608,9 @@ function buildResopalCounterBuddy(): Slot {
       c("Text", { content: "RESOURCES", size: 13, color: GOLD, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
     ]),
   ]);
-  const lifeRow       = counterRow("Life Counter",       "LIFE",       124, 10, ART_LIFE);
-  const materialRow   = counterRow("Material Counter",   "MATERIAL",   200, 0,  ART_MATERIAL);
-  const ingredientRow = counterRow("Ingredient Counter", "INGREDIENT", 276, 3,  ART_INGREDIENT);
+  const lifeRow       = counterRow("Life Counter",       "LIFE",       124, 10, artIcon(ART_LIFE));
+  const materialRow   = counterRow("Material Counter",   "MATERIAL",   200, 0,  artIcon(ART_MATERIAL));
+  const ingredientRow = counterRow("Ingredient Counter", "INGREDIENT", 276, 3,  artIcon(ART_INGREDIENT));
 
   // Section break. Snap mode reflows top-level rows onto one uniform gap, so the
   // extra air between the two halves has to be a real element rather than a
@@ -3578,7 +3623,7 @@ function buildResopalCounterBuddy(): Slot {
         offsetMin: { x: 0, y: -1 }, offsetMax: { x: 0, y: 1 },
         pivot: { x: 0.5, y: 0.5 },
       }),
-      // Pill corners on a 2px-tall rule round to a 1px radius — visually a plain
+      // Pill corners on a 2px-tall rule round to a 1px radius - visually a plain
       // hairline, but it keeps the "solid untextured rectangle" linter quiet.
       c("Image", { tint: RULE, preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
     ]),
@@ -3612,16 +3657,16 @@ function buildResopalCounterBuddy(): Slot {
     ]),
   ]);
 
-  // The two numeric halves of the souls tracker — same row shape as the three
+  // The two numeric halves of the souls tracker - same row shape as the three
   // resource counters above, tinted with the soul purple so they read as one
   // block with the pips.
-  const availableRow = counterRow("Available Counter", "AVAILABLE", 516, MAX_SOULS,      "", SOUL_TEXT);
-  const spentRow     = counterRow("Spent Counter",     "SPENT",     592, SPENT_AT_START, "", SOUL_TEXT);
+  const availableRow = counterRow("Available Counter", "AVAILABLE", 516, MAX_SOULS,      soulIcon(SOUL_LIT),  SOUL_TEXT);
+  const spentRow     = counterRow("Spent Counter",     "SPENT",     592, SPENT_AT_START, soulIcon(SOUL_USED), SOUL_TEXT);
 
   const footer = slot("Footer", [
     rectRT(W, H, 16, 668, W - 16, 694),
     c("Text", {
-      content: "Spent souls grey out but stay in your pool — Reset spent lights them all again.",
+      content: "Spent souls grey out but stay in your pool - Reset spent lights them all again.",
       size: 12, color: MUTED, horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false,
     }),
   ]);
@@ -3677,9 +3722,9 @@ export const BUILTIN_PRESETS: readonly PresetDescriptor[] = [
   },
   {
     id: "resopal-counter-buddy",
-    name: "RESOPAL — Counter Buddy",
+    name: "RESOPAL - Counter Buddy",
     description:
-      "Palworld TCG turn tracker in two ruled sections. RESOURCES: three −/+ counters — Life, Material and Ingredient, each with its own bundled resource marker and a typeable int field that exports as a named dynamic variable. SOULS: a row of ten purple card pips reading out an AVAILABLE / SPENT counter pair below it, plus a Reset spent pill and a remaining-of-pool figure. A pip is one shape with one colour, not a stack of layers, so the whole readout is ten Tint drives — purple earned, grey spent, dark not earned yet. The ⓘ dialog carries the 1/2-then-+2-per-turn soul rules, a legend of the three colours, and the wiring notes.",
+      "Palworld TCG turn tracker in two ruled sections. RESOURCES: three −/+ counters - Life, Material and Ingredient, each with its own bundled resource marker and a typeable int field that exports as a named dynamic variable. SOULS: a row of ten purple card pips reading out an AVAILABLE / SPENT counter pair below it, plus a Reset spent pill and a remaining-of-pool figure. A pip is one shape with one colour, not a stack of layers, so the whole readout is ten Tint drives - purple earned, grey spent, dark not earned yet. The ⓘ dialog carries the 1/2-then-+2-per-turn soul rules, a legend of the three colours, and the wiring notes.",
     category: "dialog",
     build: buildResopalCounterBuddy,
   },

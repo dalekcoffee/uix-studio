@@ -6458,15 +6458,30 @@ function buildPopupModalSlot(
     offsetMin: { x: 0, y: 0 }, offsetMax: { x: 0, y: 0 },
     pivot: { x: 0.5, y: 0.5 },
   });
+  // Corner-bake against the canvas, not whatever slot serializeSlot touched last
+  // — this Image is built outside its per-slot rect tracking.
+  const savedBackdropRect = _currentImageRect;
+  _currentImageRect = { w: canvasW, h: canvasH };
+  const backdropExtrasAt = _pendingImageExtras.length;
   const backdropImg = compImage({
     tint: { r: 0, g: 0, b: 0, a: 0.7 },
     preserveAspect: false, spriteUrl: "",
+    // The dimmer spans the whole canvas, so square corners would poke out past
+    // a rounded panel's silhouette — and being double-sided, they show from
+    // behind too. Round it to the panel's own corner (a no-op when the panel
+    // isn't rounded).
+    matchPanelCorners: true,
   });
+  // Drain the per-Image SpriteProvider onto THIS slot, like the card below does.
+  // Without it the Image's Sprite reference dangles and the corners stay square.
+  const backdropExtras = _pendingImageExtras.splice(backdropExtrasAt);
+  _currentImageRect = savedBackdropRect;
   const backdrop = {
     ID: backdropSlotId,
     Components: { ID: backdropCompId, Data: [
       { Type: typeIndex("RectTransform"), Data: backdropRt },
       { Type: typeIndex("Image"),         Data: backdropImg },
+      ...backdropExtras,
     ]},
     Name: { ID: nextId(), Data: "Backdrop" },
     Tag: { ID: nextId(), Data: null },
@@ -6750,15 +6765,30 @@ function buildPopupModalSlotFromContent(
     offsetMin: { x: 0, y: 0 }, offsetMax: { x: 0, y: 0 },
     pivot: { x: 0.5, y: 0.5 },
   });
+  // Corner-bake against the canvas, not whatever slot serializeSlot touched last
+  // — this Image is built outside its per-slot rect tracking.
+  const savedBackdropRect = _currentImageRect;
+  _currentImageRect = { w: canvasW, h: canvasH };
+  const backdropExtrasAt = _pendingImageExtras.length;
   const backdropImg = compImage({
     tint: { r: 0, g: 0, b: 0, a: 0.7 },
     preserveAspect: false, spriteUrl: "",
+    // The dimmer spans the whole canvas, so square corners would poke out past
+    // a rounded panel's silhouette — and being double-sided, they show from
+    // behind too. Round it to the panel's own corner (a no-op when the panel
+    // isn't rounded).
+    matchPanelCorners: true,
   });
+  // Drain the per-Image SpriteProvider onto THIS slot, like the card below does.
+  // Without it the Image's Sprite reference dangles and the corners stay square.
+  const backdropExtras = _pendingImageExtras.splice(backdropExtrasAt);
+  _currentImageRect = savedBackdropRect;
   const backdrop = {
     ID: backdropSlotId,
     Components: { ID: backdropCompId, Data: [
       { Type: typeIndex("RectTransform"), Data: backdropRt },
       { Type: typeIndex("Image"),         Data: backdropImg },
+      ...backdropExtras,
     ]},
     Name: { ID: nextId(), Data: "Backdrop" },
     Tag: { ID: nextId(), Data: null },
