@@ -3401,20 +3401,15 @@ function buildResopalCounterBuddy(): Slot {
   // value wrapper, so the Count field exports as a dynamic variable called
   // "LIFE" / "MATERIAL" / … instead of the generic slot name.
   //
-  // `artHash` is a piece of preset-shipped artwork (see model/presetArt.ts) —
-  // the three resource markers carry one; the two soul rows pass "" and get the
-  // drop-your-own-image placeholder instead.
-  function counterRow(name: string, caption: string, top: number, value: number, artHash = "", captionColor = MUTED): Slot {
-    const icon = artHash
-      ? c("Image", { tint: rgb(1, 1, 1), preserveAspect: true, spriteUrl: "", customImageHash: artHash, placeholderRemoved: true, cornerRadius: 0 })
-      : c("Image", { tint: rgb(1, 1, 1), preserveAspect: true, spriteUrl: "", useImagePlaceholder: true, cornerRadius: 12 });
+  // `icon` is the row's marker slot: artIcon() for the three resource rows,
+  // soulIcon() for the two that count souls.
+  function counterRow(name: string, caption: string, top: number, value: number, icon: Slot, captionColor = MUTED): Slot {
     return slot(name, [
       rectRT(W, H, 16, top, W - 16, top + 64),
       c("Image", { tint: CARD, preserveAspect: false, spriteUrl: "", cornerRadius: 14 }),
     ], [
       stepButton("Minus", wL(8, 56, 48), "−"),
-      // The resource marker. Swap it for your own art from the Inspector.
-      slot("Icon", [wL(76, 40, 40), icon]),
+      icon,
       slot("Label", [
         wSpan(128, 200, 28),
         c("Text", { content: caption, size: 16, color: captionColor, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
@@ -3438,6 +3433,27 @@ function buildResopalCounterBuddy(): Slot {
   // rhythm — SOULS needs the height for its reset pill.
   function sectionStrip(name: string, top: number, children: Slot[]): Slot {
     return slot(name, [rectRT(W, H, 16, top, W - 16, top + 40)], children);
+  }
+
+  // A bundled resource marker (see model/presetArt.ts). Swap it for your own art
+  // from the Inspector.
+  function artIcon(hash: string): Slot {
+    return slot("Icon", [
+      wL(76, 40, 40),
+      c("Image", { tint: rgb(1, 1, 1), preserveAspect: true, spriteUrl: "", customImageHash: hash, placeholderRemoved: true, cornerRadius: 0 }),
+    ]);
+  }
+
+  // A soul tile, for the two rows that count souls: the same rounded card as a
+  // pip in the same colour, so AVAILABLE and SPENT are self-labelling. No
+  // artwork to bundle — a pip is only ever a shape and a tint (see soulPip), so
+  // this is literally that shape again, at the pip's aspect scaled to the 40px
+  // icon column.
+  function soulIcon(tint: ReturnType<typeof rgb>): Slot {
+    return slot("Icon", [
+      wL(80, 31, 40),
+      c("Image", { tint, preserveAspect: false, spriteUrl: "", cornerRadius: 30, themeLock: true }),
+    ]);
   }
 
   // ── Soul pip ────────────────────────────────────────────────────────────────
@@ -3563,9 +3579,9 @@ function buildResopalCounterBuddy(): Slot {
       c("Text", { content: "RESOURCES", size: 13, color: GOLD, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
     ]),
   ]);
-  const lifeRow       = counterRow("Life Counter",       "LIFE",       124, 10, ART_LIFE);
-  const materialRow   = counterRow("Material Counter",   "MATERIAL",   200, 0,  ART_MATERIAL);
-  const ingredientRow = counterRow("Ingredient Counter", "INGREDIENT", 276, 3,  ART_INGREDIENT);
+  const lifeRow       = counterRow("Life Counter",       "LIFE",       124, 10, artIcon(ART_LIFE));
+  const materialRow   = counterRow("Material Counter",   "MATERIAL",   200, 0,  artIcon(ART_MATERIAL));
+  const ingredientRow = counterRow("Ingredient Counter", "INGREDIENT", 276, 3,  artIcon(ART_INGREDIENT));
 
   // Section break. Snap mode reflows top-level rows onto one uniform gap, so the
   // extra air between the two halves has to be a real element rather than a
@@ -3615,8 +3631,8 @@ function buildResopalCounterBuddy(): Slot {
   // The two numeric halves of the souls tracker — same row shape as the three
   // resource counters above, tinted with the soul purple so they read as one
   // block with the pips.
-  const availableRow = counterRow("Available Counter", "AVAILABLE", 516, MAX_SOULS,      "", SOUL_TEXT);
-  const spentRow     = counterRow("Spent Counter",     "SPENT",     592, SPENT_AT_START, "", SOUL_TEXT);
+  const availableRow = counterRow("Available Counter", "AVAILABLE", 516, MAX_SOULS,      soulIcon(SOUL_LIT),  SOUL_TEXT);
+  const spentRow     = counterRow("Spent Counter",     "SPENT",     592, SPENT_AT_START, soulIcon(SOUL_USED), SOUL_TEXT);
 
   const footer = slot("Footer", [
     rectRT(W, H, 16, 668, W - 16, 694),
