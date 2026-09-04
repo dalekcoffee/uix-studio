@@ -48,6 +48,8 @@ import { applyButtonPreset, type ButtonPresetId } from "../model/buttonPresets";
 import { findPreset } from "../model/presets";
 import { findBackgroundSlots, buildBackgroundTrio } from "../model/background";
 import { SYSTEM_ICON_FLAGS } from "../model/systemIcons";
+import { presetArtFor } from "../model/presetArt";
+import { addImageFromUrl } from "../io/imageStore";
 import { buildWidget, buildPopupContent, buildColumn, isWidgetType, userProfileLayout } from "../model/widgets";
 import {
   applyActiveTab,
@@ -647,6 +649,32 @@ interface Snapshot {
 
 const HISTORY_LIMIT = 100;
 const DEFAULT_VIEWPORT: ViewportTransform = { zoom: 1, panX: 0, panY: 0 };
+
+// Fetch every piece of preset-shipped artwork the tree references into the
+// image store (deduped by hash, so re-loading a preset is a no-op). Failures are
+// swallowed on purpose: the export path re-fetches from the same URL, so the
+// only casualty is a placeholder in the editor preview.
+async function hydratePresetArt(root: Slot): Promise<void> {
+  const wanted = new Set<string>();
+  (function walk(s: Slot) {
+    for (const comp of s.components) {
+      const hash = (comp.props as { customImageHash?: unknown }).customImageHash;
+      if (typeof hash === "string" && hash) wanted.add(hash);
+    }
+    for (const ch of s.children) walk(ch);
+  })(root);
+  await Promise.all(
+    [...wanted].map(async (hash) => {
+      const art = presetArtFor(hash);
+      if (!art) return;
+      try {
+        await addImageFromUrl(art.url, art.name);
+      } catch {
+        /* preview-only; export re-fetches */
+      }
+    }),
+  );
+}
 
 export const useStore = create<State & Actions>((set, get) => {
   function commit(next: Slot) {
@@ -2594,6 +2622,13 @@ export const useStore = create<State & Actions>((set, get) => {
       // keep their hand-placed absolute layout — skipped.) No-op for presets
       // already authored at/inside the margin; fixes any that sit too close.
       if (stack) r = enforceCanvasMargins(r);
+      // Pull any artwork the preset ships with (see model/presetArt.ts) into the
+      // image store, so its Images resolve in the preview. Fire-and-forget: the
+      // store notifies subscribers when the bytes land and useCustomImageUrl
+      // re-resolves. Export doesn't depend on this having finished — it falls
+      // back to the same URL (see exportBundle) — so a failed fetch costs a
+      // placeholder in the preview, never a broken panel.
+      void hydratePresetArt(r);
       set({
         root: r,
         selectedSlotId: null,

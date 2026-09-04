@@ -2,6 +2,7 @@ import type { Slot, UixComponent } from "./types";
 import { createStarterTemplate } from "./template";
 import { isStructuralName } from "./structural";
 import { buildBackgroundTrio } from "./background";
+import { PRESET_ART } from "./presetArt";
 import type { Lang } from "../locale/types";
 import { v4 as uuid } from "uuid";
 
@@ -137,6 +138,18 @@ function makeLinkButton(
     c("Button", { normalColor: fill, highlightColor: fillHi, pressColor: fillLo, disabledColor: rgb(0.5, 0.5, 0.5), hoverVibrate: false }),
   ], [lbl]);
 }
+
+// Preset-shipped artwork, looked up by name so a stale hash in presetArt.ts
+// throws here at module load rather than silently dangling as a missing image
+// in a panel. See model/presetArt.ts for how these get bundled.
+function art(name: string): string {
+  const found = PRESET_ART.find((a) => a.name === name);
+  if (!found) throw new Error(`Unknown preset art: ${name}`);
+  return found.hash;
+}
+const ART_LIFE       = art("Life (RESOPAL)");
+const ART_MATERIAL   = art("Material (RESOPAL)");
+const ART_INGREDIENT = art("Ingredient (RESOPAL)");
 
 // ── Presets ───────────────────────────────────────────────────────────────────
 
@@ -3280,6 +3293,355 @@ function buildResopalPanel(): Slot {
   ]);
 }
 
+// ── RESOPAL — Counter Buddy (Palworld TCG turn tracker) ──────────────────────
+// The play-side companion to the deck-import console. Two sections separated by
+// a ruled divider: RESOURCES (Life / Material / Ingredient) and SOULS.
+//
+// EVERY control here is a −/+ counter of the same shape — [−] icon LABEL [n] [+]
+// — whose number is a real int TextField, so the row exports a named int dynamic
+// variable (taken from the row's "Label" text) for ProtoFlux to read and write.
+// One input idiom, no exceptions: the ten soul pips are a pure READOUT of the
+// AVAILABLE and SPENT counters beneath them, not a second way to change them.
+// (Nothing in the editor's vocabulary increments an int on click, so the ±
+// buttons are ProtoFlux hooks too — making the pips tappable as well would have
+// been the one thing on the panel that changed state on its own, and "tap a soul
+// to un-spend it" is not a gesture the game has.)
+//
+// A soul is an IMAGE, not a number. Each of the ten pips is ONE slot with ONE
+// Image — deliberately not a stack of show/hide layers. All three states the
+// game needs are just that Image's Tint, so wiring the readout is ten colorX
+// drives and nothing else:
+//
+//   dark  rgb(0.105, 0.105, 0.145)  — not earned yet
+//   purple rgb(0.49, 0.32, 0.84)    — earned and unspent
+//   grey  rgb(0.27, 0.26, 0.32)     — consumed, but still IN the pool
+//
+// Authored purple, so dropping in custom soul art is the same image ten times.
+// "Reset spent" zeroes the SPENT count and repaints every spent pip purple.
+function buildResopalCounterBuddy(): Slot {
+  const W = 560;
+  const H = 710;
+
+  const BG        = rgb(0.055, 0.055, 0.060);
+  const HDR_GOLD  = rgb(0.85,  0.69,  0.41);   // shared with the deck-import panel
+  const HDR_TEXT  = rgb(0.09,  0.08,  0.06);
+  const CARD      = rgb(0.145, 0.145, 0.155);  // counter-row surface
+  const STEP      = rgb(0.22,  0.22,  0.25);   // − / + / reset buttons
+  const STEP_HI   = rgb(0.30,  0.30,  0.34);
+  const STEP_LO   = rgb(0.15,  0.15,  0.17);
+  const FIELD     = rgb(0.035, 0.035, 0.040);  // number boxes
+  const SURFACE   = rgb(0.12,  0.12,  0.13);   // dialog card
+  const TEXT      = rgb(0.92,  0.92,  0.93);
+  const MUTED     = rgb(0.55,  0.56,  0.60);
+  const GOLD      = rgb(0.87,  0.71,  0.36);
+  // Soul pip palette. themeLock'd everywhere it appears — purple/gray/dark are
+  // the game's own state coding, not decoration, so a theme switch must not
+  // repaint them into something that no longer reads as "spent".
+  const SOUL_DARK = rgb(0.105, 0.105, 0.145);  // locked  — not earned yet
+  const SOUL_LIT  = rgb(0.49,  0.32,  0.84);   // available
+  const SOUL_USED = rgb(0.27,  0.26,  0.32);   // spent
+  const SOUL_TEXT = rgb(0.65,  0.52,  0.92);   // the "10 / 10" readout
+  const RULE      = rgb(0.22,  0.22,  0.26);   // section divider hairline
+
+  const background = buildBackgroundTrio(BG);
+
+  // ── Geometry helpers (all relative to the PARENT row, not the canvas) ───────
+  // Box hugging the parent's LEFT edge, vertically centred.
+  const wL = (left: number, w: number, h: number): UixComponent =>
+    c("RectTransform", {
+      anchorMin: { x: 0, y: 0.5 }, anchorMax: { x: 0, y: 0.5 },
+      offsetMin: { x: left, y: -h / 2 }, offsetMax: { x: left + w, y: h / 2 },
+      pivot: { x: 0.5, y: 0.5 },
+    });
+  // Box hugging the parent's RIGHT edge, vertically centred.
+  const wR = (right: number, w: number, h: number): UixComponent =>
+    c("RectTransform", {
+      anchorMin: { x: 1, y: 0.5 }, anchorMax: { x: 1, y: 0.5 },
+      offsetMin: { x: -(right + w), y: -h / 2 }, offsetMax: { x: -right, y: h / 2 },
+      pivot: { x: 0.5, y: 0.5 },
+    });
+  // Box stretched between left/right insets of the parent, vertically centred.
+  const wSpan = (left: number, right: number, h: number): UixComponent =>
+    c("RectTransform", {
+      anchorMin: { x: 0, y: 0.5 }, anchorMax: { x: 1, y: 0.5 },
+      offsetMin: { x: left, y: -h / 2 }, offsetMax: { x: -right, y: h / 2 },
+      pivot: { x: 0.5, y: 0.5 },
+    });
+  // Fixed box measured in px from the PARENT's top-left corner (Y downward) —
+  // used inside the dialog card, which isn't canvas-sized.
+  const pl = (left: number, top: number, w: number, h: number): UixComponent =>
+    c("RectTransform", {
+      anchorMin: { x: 0, y: 1 }, anchorMax: { x: 0, y: 1 },
+      offsetMin: { x: left, y: -(top + h) }, offsetMax: { x: left + w, y: -top },
+      pivot: { x: 0.5, y: 0.5 },
+    });
+
+  // Caption always lives on a child "Label" slot: Resonite renders one Graphic
+  // per slot, so a Text beside the opaque Image would come out blank.
+  function label(text: string, size: number, color: ReturnType<typeof rgb>, align: "Left" | "Center" | "Right" = "Center"): Slot {
+    return slot("Label", [
+      fillRT(),
+      c("Text", { content: text, size, color, horizontalAlign: align, verticalAlign: "Middle", autoSize: false }),
+    ]);
+  }
+
+  // ── Counter row ─────────────────────────────────────────────────────────────
+  // Named "Minus"/"Plus" so applyButtonB re-skins the steppers with the theme's
+  // secondary colour instead of leaving them dark on a light theme.
+  function stepButton(name: "Minus" | "Plus", rt: UixComponent, glyph: string): Slot {
+    return slot(name, [
+      rt,
+      c("Image", { tint: STEP, preserveAspect: false, spriteUrl: "", cornerRadius: 24 }),
+      c("Button", { normalColor: STEP, highlightColor: STEP_HI, pressColor: STEP_LO, disabledColor: rgb(0.3, 0.3, 0.3), hoverVibrate: false }),
+    ], [label(glyph, 28, TEXT)]);
+  }
+
+  // [−]  [icon]  CAPTION  ……  [ n ]  [+]  on a rounded card, 64px tall.
+  // The caption child MUST stay named "Label": that's what makes the row the
+  // value wrapper, so the Count field exports as a dynamic variable called
+  // "LIFE" / "MATERIAL" / … instead of the generic slot name.
+  //
+  // `artHash` is a piece of preset-shipped artwork (see model/presetArt.ts) —
+  // the three resource markers carry one; the two soul rows pass "" and get the
+  // drop-your-own-image placeholder instead.
+  function counterRow(name: string, caption: string, top: number, value: number, artHash = "", captionColor = MUTED): Slot {
+    const icon = artHash
+      ? c("Image", { tint: rgb(1, 1, 1), preserveAspect: true, spriteUrl: "", customImageHash: artHash, placeholderRemoved: true, cornerRadius: 0 })
+      : c("Image", { tint: rgb(1, 1, 1), preserveAspect: true, spriteUrl: "", useImagePlaceholder: true, cornerRadius: 12 });
+    return slot(name, [
+      rectRT(W, H, 16, top, W - 16, top + 64),
+      c("Image", { tint: CARD, preserveAspect: false, spriteUrl: "", cornerRadius: 14 }),
+    ], [
+      stepButton("Minus", wL(8, 56, 48), "−"),
+      // The resource marker. Swap it for your own art from the Inspector.
+      slot("Icon", [wL(76, 40, 40), icon]),
+      slot("Label", [
+        wSpan(128, 200, 28),
+        c("Text", { content: caption, size: 16, color: captionColor, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+      ]),
+      // A real int field, so the count is typeable in-game and readable from
+      // ProtoFlux — not a static Text that only a driver can change.
+      slot("Count", [
+        wR(72, 100, 44),
+        c("Image", { tint: FIELD, preserveAspect: false, spriteUrl: "", cornerRadius: 10 }),
+        c("TextField", {
+          placeholder: "0", textContent: String(value), fontSize: 26, fieldType: "int",
+          textAlign: "Center", textVerticalAlign: "Middle",
+          textColor: TEXT, placeholderColor: MUTED, backgroundTint: FIELD,
+        }),
+      ]),
+      stepButton("Plus", wR(8, 56, 48), "+"),
+    ]);
+  }
+
+  // A section caption strip. 40px tall so RESOURCES and SOULS sit on the same
+  // rhythm — SOULS needs the height for its reset pill.
+  function sectionStrip(name: string, top: number, children: Slot[]): Slot {
+    return slot(name, [rectRT(W, H, 16, top, W - 16, top + 40)], children);
+  }
+
+  // ── Soul pip ────────────────────────────────────────────────────────────────
+  const PIP_W = 34, PIP_H = 44, PIP_GAP = 8;
+  const MAX_SOULS = 10;
+  // Authored state: a full pool with nothing spent, matching the "10 / 10"
+  // readout. Nothing about a pip is baked to a position in the row — they are
+  // ten identical shapes, and which colour each one wears is entirely up to
+  // whatever drives its Tint.
+  const SPENT_AT_START = 0;
+  function soulPip(i: number): Slot {
+    return slot(`Soul ${i}`, [
+      wL((i - 1) * (PIP_W + PIP_GAP), PIP_W, PIP_H),
+      c("Image", { tint: SOUL_LIT, preserveAspect: false, spriteUrl: "", cornerRadius: 30, themeLock: true }),
+    ]);
+  }
+
+  // ── How-souls-work dialog (opened by the header's ⓘ) ────────────────────────
+  const ABOUT_W = 480, ABOUT_H = 438;
+  // The editor can only draw one pip state (see soulPip), so the card carries a
+  // legend of all three. These are plain swatches — no layers, no wiring.
+  function legendPip(name: string, left: number, tint: ReturnType<typeof rgb>, caption: string): Slot {
+    return slot(name, [pl(left, 8, 26, 36), c("Image", { tint, preserveAspect: false, spriteUrl: "", cornerRadius: 30, themeLock: true })], [
+      slot("Caption", [
+        c("RectTransform", {
+          anchorMin: { x: 0, y: 0.5 }, anchorMax: { x: 0, y: 0.5 },
+          offsetMin: { x: 34, y: -11 }, offsetMax: { x: 140, y: 11 },
+          pivot: { x: 0.5, y: 0.5 },
+        }),
+        c("Text", { content: caption, size: 12, color: MUTED, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+      ]),
+    ]);
+  }
+  const aboutCard = slot("Souls Dialog", [
+    c("RectTransform", {
+      anchorMin: { x: 0.5, y: 0.5 }, anchorMax: { x: 0.5, y: 0.5 },
+      offsetMin: { x: -ABOUT_W / 2, y: -ABOUT_H / 2 }, offsetMax: { x: ABOUT_W / 2, y: ABOUT_H / 2 },
+      pivot: { x: 0.5, y: 0.5 },
+    }),
+    c("Image", { tint: SURFACE, preserveAspect: false, spriteUrl: "", cornerRadius: 16 }),
+    c("PopupContent", {}),
+  ], [
+    slot("Title", [
+      pl(16, 14, ABOUT_W - 32, 28),
+      c("Text", { content: "How souls work", size: 20, color: TEXT, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+    ]),
+    slot("Body", [
+      pl(16, 50, ABOUT_W - 32, 150),
+      c("Text", {
+        content:
+          "Souls are the pool you spawn from. One player opens with 1 soul, the other with 2, then both gain 2 more every turn up to a maximum of 10.\n\nSpending a soul greys it out but leaves it in the pool, so you can always see the whole turn at a glance. Reset spent lights them all back up.",
+        size: 14, color: MUTED, horizontalAlign: "Left", verticalAlign: "Top", autoSize: false,
+      }),
+    ]),
+    slot("States Label", [
+      pl(16, 210, ABOUT_W - 32, 18),
+      c("Text", { content: "STATES", size: 11, color: GOLD, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+    ]),
+    slot("States Legend", [pl(16, 232, ABOUT_W - 32, 52)], [
+      legendPip("Legend Locked",    0,   SOUL_DARK, "Not earned"),
+      legendPip("Legend Available", 155, SOUL_LIT,  "Available"),
+      legendPip("Legend Spent",     310, SOUL_USED, "Spent"),
+    ]),
+    slot("Wiring Label", [
+      pl(16, 296, ABOUT_W - 32, 18),
+      c("Text", { content: "WIRING", size: 11, color: GOLD, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+    ]),
+    slot("Wiring Body", [
+      pl(16, 318, ABOUT_W - 32, 56),
+      c("Text", {
+        content:
+          "The souls row is a readout of the two counters under it. Each pip is one Image — drive its Tint: purple while spent < i <= available, grey while i <= spent, dark past the pool. Reset spent zeroes the SPENT count.",
+        size: 12, color: MUTED, horizontalAlign: "Left", verticalAlign: "Top", autoSize: false,
+      }),
+    ]),
+    slot("Dismiss", [
+      pl((ABOUT_W - 112) / 2, 384, 112, 36),
+      c("Image", { tint: rgb(0.18, 0.36, 0.60), preserveAspect: false, spriteUrl: "", cornerRadius: 8 }),
+      c("Button", { normalColor: rgb(0.18, 0.36, 0.60), highlightColor: rgb(0.26, 0.46, 0.72), pressColor: rgb(0.12, 0.26, 0.44), disabledColor: rgb(0.3, 0.3, 0.3), hoverVibrate: false }),
+      c("PopupDismiss", {}),
+    ], [label("Got it", 15, rgb(1, 1, 1))]),
+  ]);
+
+  // ── Header ──────────────────────────────────────────────────────────────────
+  const infoBtn = makeHelpBtn(
+    c("RectTransform", {
+      anchorMin: { x: 0, y: 0.5 }, anchorMax: { x: 0, y: 0.5 },
+      offsetMin: { x: 10, y: -18 }, offsetMax: { x: 46, y: 18 },
+      pivot: { x: 0.5, y: 0.5 },
+    }),
+    {
+      title: "How souls work",
+      body:
+        "Souls are the pool you spawn from: 1 soul for the player going first, 2 for the other, then +2 each turn up to 10. Spending a soul greys it out but leaves it in the pool; Reset spent lights them all back up.",
+      dismissLabel: "Got it",
+      contentSlotId: aboutCard.id,
+    },
+  );
+  const headerTitle = slot("Title", [
+    c("RectTransform", {
+      anchorMin: { x: 0, y: 0 }, anchorMax: { x: 1, y: 1 },
+      offsetMin: { x: 54, y: 0 }, offsetMax: { x: -52, y: 0 },
+      pivot: { x: 0.5, y: 0.5 },
+    }),
+    // Authored dark for the gold banner; applyHeaderText owns slots named
+    // "Title" and repaints it on a theme switch (so no themeLock here).
+    c("Text", { content: "COUNTER BUDDY", size: 26, color: HDR_TEXT, horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false }),
+  ]);
+  const closeBtn = makeCloseBtn(c("RectTransform", {
+    anchorMin: { x: 1, y: 0.5 }, anchorMax: { x: 1, y: 0.5 },
+    offsetMin: { x: -46, y: -18 }, offsetMax: { x: -10, y: 18 },
+    pivot: { x: 0.5, y: 0.5 },
+  }));
+  const header = slot("Header", [
+    rectRT(W, H, 0, 0, W, 56),
+    c("Image", { tint: HDR_GOLD, preserveAspect: false, spriteUrl: "", cornerRadius: 30 }),
+  ], [infoBtn, headerTitle, closeBtn]);
+
+  // ── Body ────────────────────────────────────────────────────────────────────
+  const resourcesHeader = sectionStrip("Resources Header", 72, [
+    slot("Resources Label", [
+      wL(0, 120, 24),
+      c("Text", { content: "RESOURCES", size: 13, color: GOLD, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+    ]),
+  ]);
+  const lifeRow       = counterRow("Life Counter",       "LIFE",       124, 10, ART_LIFE);
+  const materialRow   = counterRow("Material Counter",   "MATERIAL",   200, 0,  ART_MATERIAL);
+  const ingredientRow = counterRow("Ingredient Counter", "INGREDIENT", 276, 3,  ART_INGREDIENT);
+
+  // Section break. Snap mode reflows top-level rows onto one uniform gap, so the
+  // extra air between the two halves has to be a real element rather than a
+  // bigger y-step: a 32px-tall empty container with a 2px rule down its middle
+  // buys 12 + 32 + 12 = 56px of separation that survives export.
+  const divider = slot("Divider", [rectRT(W, H, 16, 352, W - 16, 384)], [
+    slot("Rule", [
+      c("RectTransform", {
+        anchorMin: { x: 0, y: 0.5 }, anchorMax: { x: 1, y: 0.5 },
+        offsetMin: { x: 0, y: -1 }, offsetMax: { x: 0, y: 1 },
+        pivot: { x: 0.5, y: 0.5 },
+      }),
+      // Pill corners on a 2px-tall rule round to a 1px radius — visually a plain
+      // hairline, but it keeps the "solid untextured rectangle" linter quiet.
+      c("Image", { tint: RULE, preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+    ]),
+  ]);
+
+  // Section strip: caption + rules reminder on the left, reset on the right.
+  // "Reset Spent" is in applyButtonB's secondary-action name list, so it
+  // re-skins with the theme rather than staying a hardcoded dark pill.
+  const soulsHeader = sectionStrip("Souls Header", 396, [
+    slot("Souls Label", [
+      wL(0, 64, 24),
+      c("Text", { content: "SOULS", size: 13, color: GOLD, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+    ]),
+    slot("Souls Hint", [
+      wL(68, 240, 22),
+      c("Text", { content: "MAX 10  ·  +2 EACH TURN", size: 11, color: MUTED, horizontalAlign: "Left", verticalAlign: "Middle", autoSize: false }),
+    ]),
+    slot("Reset Spent", [
+      wR(0, 176, 40),
+      c("Image", { tint: STEP, preserveAspect: false, spriteUrl: "", cornerRadius: 100 }),
+      c("Button", { normalColor: STEP, highlightColor: STEP_HI, pressColor: STEP_LO, disabledColor: rgb(0.3, 0.3, 0.3), hoverVibrate: false }),
+    ], [label("↺  Reset spent", 15, TEXT)]),
+  ]);
+
+  // Ten pips + the remaining/pool readout, mirroring the in-game HUD.
+  const soulsRow = slot("Souls Row", [rectRT(W, H, 16, 448, W - 16, 504)], [
+    ...Array.from({ length: MAX_SOULS }, (_, i) => soulPip(i + 1)),
+    slot("Readout", [
+      wR(0, 96, 32),
+      c("Text", { content: "10 / 10", size: 22, color: SOUL_TEXT, horizontalAlign: "Right", verticalAlign: "Middle", autoSize: false }),
+    ]),
+  ]);
+
+  // The two numeric halves of the souls tracker — same row shape as the three
+  // resource counters above, tinted with the soul purple so they read as one
+  // block with the pips.
+  const availableRow = counterRow("Available Counter", "AVAILABLE", 516, MAX_SOULS,      "", SOUL_TEXT);
+  const spentRow     = counterRow("Spent Counter",     "SPENT",     592, SPENT_AT_START, "", SOUL_TEXT);
+
+  const footer = slot("Footer", [
+    rectRT(W, H, 16, 668, W - 16, 694),
+    c("Text", {
+      content: "Spent souls grey out but stay in your pool — Reset spent lights them all again.",
+      size: 12, color: MUTED, horizontalAlign: "Center", verticalAlign: "Middle", autoSize: false,
+    }),
+  ]);
+
+  return slot("Canvas", [
+    c("Canvas", { sizeX: W, sizeY: H, pixelScale: 0.0005, acceptPhysicalTouch: true, backgroundColor: BG, rounded: true }),
+    fillRT(),
+  ], [
+    background, header,
+    resourcesHeader, lifeRow, materialRow, ingredientRow,
+    divider,
+    soulsHeader, soulsRow, availableRow, spentRow,
+    footer,
+    // Dialog card: a direct Canvas-root child, never rendered inline (the editor
+    // shows it as a centered overlay while editing; the exporter lowers it into
+    // an Active=false modal sub-tree).
+    aboutCard,
+  ]);
+}
+
 export const BUILTIN_PRESETS: readonly PresetDescriptor[] = [
   {
     id: "experimental",
@@ -3312,6 +3674,14 @@ export const BUILTIN_PRESETS: readonly PresetDescriptor[] = [
       "Palworld TCG deck-import console: gold header (ⓘ info + logo tile + ✕ close), description and status line, a clickable link out to palify.org, a QUICK IMPORT section with two trial decks and a booster, and an OR PASTE YOUR OWN section with a scrollable paste box + Import action. The Debug info button opens a dialog with Request / Response fields to drive from ProtoFlux; the header's ⓘ opens the about + credits dialog.",
     category: "dialog",
     build: buildResopalPanel,
+  },
+  {
+    id: "resopal-counter-buddy",
+    name: "RESOPAL — Counter Buddy",
+    description:
+      "Palworld TCG turn tracker in two ruled sections. RESOURCES: three −/+ counters — Life, Material and Ingredient, each with its own bundled resource marker and a typeable int field that exports as a named dynamic variable. SOULS: a row of ten purple card pips reading out an AVAILABLE / SPENT counter pair below it, plus a Reset spent pill and a remaining-of-pool figure. A pip is one shape with one colour, not a stack of layers, so the whole readout is ten Tint drives — purple earned, grey spent, dark not earned yet. The ⓘ dialog carries the 1/2-then-+2-per-turn soul rules, a legend of the three colours, and the wiring notes.",
+    category: "dialog",
+    build: buildResopalCounterBuddy,
   },
   {
     id: "basic-text",

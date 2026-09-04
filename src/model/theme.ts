@@ -730,7 +730,14 @@ export function applyButtonB(root: Slot, color: Color): Slot {
       lowerName === "uninstall" ||
       lowerName === "trial deck a" ||
       lowerName === "trial deck b" ||
-      lowerName === "booster bp01";
+      lowerName === "booster bp01" ||
+      // Counter Buddy: the − / + steppers on every counter row and the souls
+      // "Reset spent" pill. Same secondary-action role as the buttons above —
+      // without this they'd keep an authored dark fill and go unreadable on a
+      // light theme.
+      lowerName === "minus" ||
+      lowerName === "plus" ||
+      lowerName === "reset spent";
     const isToolIconButton = icon === "useHelpIcon" || icon === "useCloseIcon";
     const isKeypadKey = hasButton && /^key /i.test(s.name.trim());
     if (isNamedButtonB || isToolIconButton || isKeypadKey) {
