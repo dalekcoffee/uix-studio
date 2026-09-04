@@ -35,6 +35,14 @@ const PRESET_META: Record<string, PresetMeta> = {
       ja: "Palworld TCG のデッキインポートコンソール: 金色のヘッダー（ⓘ インフォ＋ロゴタイル＋✕ 閉じる）、説明とステータス行、palify.org へのクリック可能なリンク、トライアルデッキ2つとブースターのクイックインポートセクション、スクロールする貼り付けボックスとインポートボタンの自分で貼り付けセクション。デバッグ情報ボタンは ProtoFlux で駆動するリクエスト / レスポンスのフィールドを持つダイアログを開き、ヘッダーの ⓘ は概要とクレジットのダイアログを開きます。",
     },
   },
+  "resopal-counter-buddy": {
+    name: { ko: "RESOPAL — 카운터 버디", es: "RESOPAL — Contador de partida", ja: "RESOPAL — カウンターバディ" },
+    description: {
+      ko: "구분선으로 두 섹션을 나눈 Palworld TCG 턴 트래커. 자원: 직접 아이콘을 넣을 수 있는 타일과 입력 가능한 정수 필드가 붙은 −/+ 카운터 3개(라이프, 재료, 재료아이템). 소울: 아래의 보유 / 소모 카운터 두 개를 그대로 보여주는 보라색 카드 10개와 소모 초기화 버튼, 남은 수 표시. 각 소울은 어두운 미획득 바탕, 회색 소모 레이어, 그 위의 보라색 보유 레이어로 이루어져 있으며 10개가 모두 동일해서 같은 소울 이미지를 10번 넣고 소울마다 Active 2개만 연결하면 됩니다. ⓘ 대화 상자에는 1·2로 시작해 매 턴 +2씩 늘어나는 소울 규칙, 세 가지 상태 범례, ProtoFlux 연결 방법이 담겨 있습니다.",
+      es: "Marcador de turnos para el TCG de Palworld en dos secciones separadas por una regla. RECURSOS: tres contadores −/+ (Vida, Material, Ingrediente) con mosaicos de icono propios y campos de entero editables. ALMAS: una fila de diez fichas moradas que refleja el par de contadores DISPONIBLE / GASTADAS de debajo, más una píldora de reinicio y la cifra de restantes sobre el total. Cada ficha apila una base oscura de «sin obtener», una capa gris de gastada y una capa morada de disponible encima — las diez idénticas, así que es la misma arte de alma diez veces y dos controles de Active por ficha. El diálogo ⓘ trae las reglas de almas (1 y 2 al empezar, luego +2 por turno), una leyenda de los tres estados y los enganches de ProtoFlux.",
+      ja: "罫線で2つのセクションに分けた Palworld TCG のターントラッカー。リソース: 自前のアイコンを置けるタイルと入力可能な整数フィールドを持つ −/+ カウンター3つ（ライフ、マテリアル、素材）。ソウル: 下の 所持 / 消費 カウンター2つをそのまま映す紫のカード10枚と、消費リセットのピル、残り数の表示。各ソウルは暗い未獲得の地、グレーの消費レイヤー、その上の紫の所持レイヤーの重ね構造で、10枚すべて同一なので同じソウル画像を10回入れ、1枚につき Active を2つ繋ぐだけです。ⓘ ダイアログには1・2で始まり毎ターン +2 増えるソウルのルール、3つの状態の凡例、ProtoFlux の接続先が入っています。",
+    },
+  },
   "basic-text": {
     name: { ko: "기본 텍스트", es: "Texto básico", ja: "基本テキスト" },
     description: {

@@ -19,6 +19,40 @@ import type { Lang } from "./types";
 type Target = Exclude<Lang, "en">;
 
 const PRESET_TEXT: Record<string, Record<Target, string>> = {
+  "AVAILABLE": { ko: "보유", es: "DISPONIBLE", ja: "所持" },
+  "Available": { ko: "보유 중", es: "Disponible", ja: "所持中" },
+  "How souls work": { ko: "소울 사용 방법", es: "Cómo funcionan las almas", ja: "ソウルの仕組み" },
+  "INGREDIENT": { ko: "재료", es: "INGREDIENTE", ja: "素材" },
+  "LIFE": { ko: "라이프", es: "VIDA", ja: "ライフ" },
+  "MATERIAL": { ko: "재료 자원", es: "MATERIAL", ja: "マテリアル" },
+  "MAX 10  ·  +2 EACH TURN": { ko: "최대 10  ·  매 턴 +2", es: "MÁX 10  ·  +2 POR TURNO", ja: "最大10  ·  毎ターン +2" },
+  "Not earned": { ko: "미획득", es: "Sin obtener", ja: "未獲得" },
+  "RESOURCES": { ko: "자원", es: "RECURSOS", ja: "リソース" },
+  "SOULS": { ko: "소울", es: "ALMAS", ja: "ソウル" },
+  "Souls are the pool you spawn from. One player opens with 1 soul, the other with 2, then both gain 2 more every turn up to a maximum of 10.\n\nSpending a soul greys it out but leaves it in the pool, so you can always see the whole turn at a glance. Reset spent lights them all back up.": {
+    ko: "소울은 소환에 쓰는 풀입니다. 한 플레이어는 소울 1개로, 다른 플레이어는 2개로 시작하고, 이후 둘 다 매 턴 2개씩 최대 10개까지 늘어납니다.\n\n소울을 쓰면 회색으로 변하지만 풀에는 그대로 남아 한 턴 전체를 한눈에 볼 수 있습니다. 소모 초기화를 누르면 전부 다시 켜집니다.",
+    es: "Las almas son la reserva desde la que invocas. Un jugador empieza con 1 alma y el otro con 2; a partir de ahí ambos ganan 2 más cada turno hasta un máximo de 10.\n\nGastar un alma la vuelve gris pero la deja en la reserva, así que siempre ves el turno completo de un vistazo. Reiniciar gastadas las vuelve a encender todas.",
+    ja: "ソウルはスポーンの元になるプールです。一方のプレイヤーは1、もう一方は2から始め、その後は両者とも毎ターン2ずつ、最大10まで増えます。\n\nソウルを使うとグレーになりますがプールには残るので、ターン全体をひと目で把握できます。消費リセットですべて戻ります。",
+  },
+  "Souls are the pool you spawn from: 1 soul for the player going first, 2 for the other, then +2 each turn up to 10. Spending a soul greys it out but leaves it in the pool; Reset spent lights them all back up.": {
+    ko: "소울은 소환에 쓰는 풀입니다. 선공 플레이어는 1개, 후공은 2개로 시작해 매 턴 +2씩 최대 10개까지 늘어납니다. 소울을 쓰면 회색으로 변하지만 풀에는 남으며, 소모 초기화를 누르면 전부 다시 켜집니다.",
+    es: "Las almas son la reserva desde la que invocas: 1 alma para quien empieza, 2 para el otro, y después +2 cada turno hasta 10. Gastar un alma la vuelve gris pero la deja en la reserva; reiniciar gastadas las vuelve a encender todas.",
+    ja: "ソウルはスポーンの元になるプールです。先攻は1、後攻は2から始まり、以降は毎ターン +2 で最大10まで増えます。ソウルを使うとグレーになりますがプールには残り、消費リセットですべて戻ります。",
+  },
+  "SPENT": { ko: "소모", es: "GASTADAS", ja: "消費" },
+  "Spent": { ko: "소모됨", es: "Gastada", ja: "消費済み" },
+  "Spent souls grey out but stay in your pool — Reset spent lights them all again.": {
+    ko: "소모된 소울은 회색이 되지만 풀에는 남습니다 — 소모 초기화를 누르면 전부 다시 켜집니다.",
+    es: "Las almas gastadas se vuelven grises pero siguen en tu reserva — Reiniciar gastadas las enciende todas de nuevo.",
+    ja: "消費したソウルはグレーになりますがプールには残ります — 消費をリセットするとすべて戻ります。",
+  },
+  "STATES": { ko: "상태", es: "ESTADOS", ja: "状態" },
+  "The souls row is a readout of the two counters under it. Show a pip's Available layer while spent < i <= available, its Spent layer while i <= spent, and leave both off past the pool. Reset spent zeroes the SPENT count.": {
+    ko: "소울 행은 아래 두 카운터를 그대로 보여주는 표시입니다. spent < i <= available 인 동안 해당 소울의 Available 레이어를, i <= spent 인 동안 Spent 레이어를 켜고, 풀을 넘어가면 둘 다 끕니다. 소모 초기화는 SPENT 값을 0으로 만듭니다.",
+    es: "La fila de almas es una lectura de los dos contadores de abajo. Muestra la capa Available de una ficha mientras gastadas < i <= disponibles, su capa Spent mientras i <= gastadas, y deja ambas apagadas más allá de la reserva. Reiniciar gastadas pone el contador SPENT a cero.",
+    ja: "ソウルの行は下の2つのカウンターを映す表示です。spent < i <= available の間はそのソウルの Available レイヤーを、i <= spent の間は Spent レイヤーをオンにし、プールを超えたら両方オフにします。消費のリセットは SPENT を0にします。",
+  },
+  "WIRING": { ko: "연결", es: "CONEXIÓN", ja: "配線" },
   "• Art\n• Games\n• Just chatting\n• Other ...": {
     ko: "• 아트\n• 게임\n• 잡담\n• 기타 ...",
     es: "• Arte\n• Juegos\n• Charla\n• Otros ...",
@@ -281,6 +315,7 @@ const PRESET_TEXT: Record<string, Record<Target, string>> = {
   "What's on your mind?": { ko: "무슨 생각을 하고 계신가요?", es: "¿Qué estás pensando?", ja: "いま何してる？" },
   "Your name here": { ko: "여기에 이름 입력", es: "Tu nombre aquí", ja: "ここに名前を入力" },
   "Your Name Here": { ko: "여기에 이름 입력", es: "Tu nombre aquí", ja: "ここに名前を入力" },
+  "↺  Reset spent": { ko: "↺  소모 초기화", es: "↺  Reiniciar gastadas", ja: "↺  消費をリセット" },
 };
 
 function tr(s: string, lang: Target): string {
