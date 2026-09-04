@@ -47,12 +47,6 @@ const PRESET_TEXT: Record<string, Record<Target, string>> = {
     ja: "消費したソウルはグレーになりますがプールには残ります — 消費をリセットするとすべて戻ります。",
   },
   "STATES": { ko: "상태", es: "ESTADOS", ja: "状態" },
-  "The souls row is a readout of the two counters under it. Each pip is one Image — drive its Tint: purple while spent < i <= available, grey while i <= spent, dark past the pool. Reset spent zeroes the SPENT count.": {
-    ko: "소울 행은 아래 두 카운터를 그대로 보여주는 표시입니다. 소울 하나는 Image 하나이므로 Tint를 구동하세요 — spent < i <= available 이면 보라, i <= spent 이면 회색, 풀을 넘어가면 어두운 색. 소모 초기화는 SPENT 값을 0으로 만듭니다.",
-    es: "La fila de almas es una lectura de los dos contadores de abajo. Cada ficha es una sola Image — controla su Tint: morado mientras gastadas < i <= disponibles, gris mientras i <= gastadas, oscuro más allá de la reserva. Reiniciar gastadas pone el contador SPENT a cero.",
-    ja: "ソウルの行は下の2つのカウンターを映す表示です。ソウル1つは Image 1つなので Tint を駆動してください — spent < i <= available なら紫、i <= spent ならグレー、プールを超えたら暗い色。消費のリセットは SPENT を0にします。",
-  },
-  "WIRING": { ko: "연결", es: "CONEXIÓN", ja: "配線" },
   "• Art\n• Games\n• Just chatting\n• Other ...": {
     ko: "• 아트\n• 게임\n• 잡담\n• 기타 ...",
     es: "• Arte\n• Juegos\n• Charla\n• Otros ...",
