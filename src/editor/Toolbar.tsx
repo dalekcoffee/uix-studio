@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { useStore } from "../state/store";
 import { useDialog } from "./useDialog";
 import { APP_AUTHOR, APP_VERSION, APP_CHANNEL } from "../version";
-import { exportNativeFile, downloadBlob } from "../io/exportNative";
+import { downloadBlob } from "../io/exportNative";
+import { saveProject } from "../io/saveProject";
 import { importNativeFile } from "../io/importNative";
 import { exportBundleZip } from "../io/exportBundle";
 import AddMenu from "./AddMenu";
@@ -17,8 +18,8 @@ import { useT } from "../locale/useT";
 
 export default function Toolbar() {
   const documentSnapshot = useStore((s) => s.documentSnapshot);
+  const dirty = useStore((s) => s.dirty);
   const loadDocument = useStore((s) => s.loadDocument);
-  const markClean = useStore((s) => s.markClean);
   const reset = useStore((s) => s.reset);
   const undo = useStore((s) => s.undo);
   const redo = useStore((s) => s.redo);
@@ -32,13 +33,7 @@ export default function Toolbar() {
   const setWhatsNewOpen = useStore((s) => s.setWhatsNewOpen);
   const t = useT();
 
-  function onSave() {
-    const blob = exportNativeFile(documentSnapshot());
-    downloadBlob(blob, "panel.uixstudio.json");
-    // The editable project is now persisted to a file the user controls — clear
-    // the unsaved-changes flag so the close-tab guard stops warning.
-    markClean();
-  }
+  const onSave = saveProject;
 
   async function onExportBrson() {
     if (isExporting) return;
@@ -91,6 +86,11 @@ export default function Toolbar() {
           className="flex items-center gap-1 rounded text-[10px] text-slate-500 transition hover:text-sky-300 hover:underline"
         >
           v{APP_VERSION}
+          {dirty && (
+            <span title={t.toolbar.unsavedTip} aria-label={t.toolbar.unsavedTip} className="text-amber-400">
+              ●
+            </span>
+          )}
           {APP_CHANNEL && (
             <span className="rounded bg-amber-500/20 px-1 text-[9px] font-semibold uppercase tracking-wide text-amber-300">
               {APP_CHANNEL}

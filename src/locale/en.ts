@@ -32,6 +32,7 @@ export const en = {
     saveProject: "💾 Save Project",
     saveProjectTip:
       "Save Project — downloads an editable .uixstudio.json you can reopen here later. This is NOT the Resonite file; use Export for that.",
+    unsavedTip: "Unsaved changes (Ctrl+S to save the project)",
     openProject: "Open Project…",
     openProjectTip: "Open a previously saved .uixstudio.json project to keep editing",
     exportResonite: "⬇ Export to Resonite",

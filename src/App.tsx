@@ -40,16 +40,39 @@ export default function App() {
   // a "restore previous session" prompt for work they never did.
   useEffect(() => {
     let timer: number | undefined;
+    let pending = false;
+    function flush() {
+      window.clearTimeout(timer);
+      if (!pending) return;
+      pending = false;
+      // Re-check dirty: a Save/New/Open between the edit and the flush means
+      // there is nothing left worth persisting.
+      if (!useStore.getState().dirty) return;
+      writeAutosave(useStore.getState().documentSnapshot(), Date.now());
+    }
     const unsub = useStore.subscribe((state, prev) => {
-      if (!state.dirty) return;
+      if (!state.dirty) {
+        // Saved / loaded / reset: drop any write still waiting on the debounce.
+        pending = false;
+        window.clearTimeout(timer);
+        return;
+      }
       if (state.root === prev.root && state.theme === prev.theme) return;
+      pending = true;
       window.clearTimeout(timer);
-      timer = window.setTimeout(() => {
-        writeAutosave(useStore.getState().documentSnapshot(), Date.now());
-      }, AUTOSAVE_DEBOUNCE_MS);
+      timer = window.setTimeout(flush, AUTOSAVE_DEBOUNCE_MS);
     });
+    // The debounce would otherwise lose the last <800ms of edits when the tab
+    // is closed or backgrounded, so write immediately on those events.
+    function onVisibility() {
+      if (document.visibilityState === "hidden") flush();
+    }
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", flush);
     return () => {
-      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", flush);
+      flush();
       unsub();
     };
   }, []);

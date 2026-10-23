@@ -20,6 +20,7 @@ export const ja: Dictionary = {
     saveProject: "💾 プロジェクトを保存",
     saveProjectTip:
       "プロジェクトを保存 — 後でここで再び開ける編集可能な .uixstudio.json をダウンロードします。これは Resonite 用のファイルではありません。その用途にはエクスポートを使ってください。",
+    unsavedTip: "未保存の変更があります（Ctrl+S でプロジェクトを保存）",
     openProject: "プロジェクトを開く…",
     openProjectTip: "以前保存した .uixstudio.json プロジェクトを開いて編集を続けます",
     exportResonite: "⬇ Resonite にエクスポート",

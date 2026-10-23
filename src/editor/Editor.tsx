@@ -7,6 +7,7 @@ import Toolbar from "./Toolbar";
 import ContextMenu from "./ContextMenu";
 import { useDialog } from "./useDialog";
 import { confirmDeleteSlot } from "./deleteConfirm";
+import { saveProject } from "../io/saveProject";
 
 export default function Editor() {
   const undo = useStore((s) => s.undo);
@@ -25,24 +26,37 @@ export default function Editor() {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement)?.tagName;
-      const inField = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+      const inField =
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        (e.target as HTMLElement | null)?.isContentEditable === true;
       const meta = e.ctrlKey || e.metaKey;
+      // e.key is "Z" with Shift or Caps Lock held, so compare case-insensitively.
+      const key = e.key.toLowerCase();
+      // Save also works while typing in a field (the browser's own Ctrl+S would
+      // otherwise try to save the web page).
+      if (meta && key === "s") {
+        e.preventDefault();
+        saveProject();
+        return;
+      }
       // While typing in a field, let the input own its keys — Ctrl+Z must be the
       // browser's native input-undo (not app-level undo), Ctrl+D must not
       // duplicate the selected slot, and Delete/Backspace must edit text, not the
       // canvas. App shortcuts only apply when focus isn't in an editable field.
       if (inField) return;
-      if (meta && e.key === "z" && !e.shiftKey) {
+      if (meta && key === "z" && !e.shiftKey) {
         e.preventDefault();
         undo();
         return;
       }
-      if (meta && (e.key === "y" || (e.key === "z" && e.shiftKey))) {
+      if (meta && (key === "y" || (key === "z" && e.shiftKey))) {
         e.preventDefault();
         redo();
         return;
       }
-      if (meta && (e.key === "d" || e.key === "D")) {
+      if (meta && key === "d") {
         if (selectedSlotId && selectedSlotId !== root.id) {
           e.preventDefault();
           duplicate(selectedSlotId);
@@ -55,7 +69,7 @@ export default function Editor() {
         confirmDeleteSlot(dialog.confirm, root, id).then((ok) => { if (ok) remove(id); });
         return;
       }
-      if ((e.key === "f" || e.key === "F") && !meta) {
+      if (key === "f" && !meta) {
         e.preventDefault();
         resetViewport();
         return;
