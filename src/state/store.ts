@@ -83,6 +83,7 @@ import {
   type ThemePresetId,
 } from "../model/theme";
 import { APP_VERSION } from "../version";
+import { clearAutosave } from "../io/autosave";
 import { computeAbsoluteRect, isLayoutManaged, rectToOffsets } from "../editor/render/slotRect";
 import { rowBandFor, type RowBand } from "../editor/render/alignAvail";
 import { computeChildRect, getRectTransform, type Rect } from "../editor/render/rectTransform";
@@ -648,6 +649,21 @@ interface Snapshot {
 }
 
 const HISTORY_LIMIT = 100;
+
+// Transient editor state that must not leak from one document into the next
+// (selection, undo stacks, popup editing, coalescing keys, free-mode flag).
+// Spread into every whole-document replacement (load / preset / new).
+const FRESH_SESSION = {
+  selectedSlotId: null,
+  editingPopupId: null,
+  history: [] as Snapshot[],
+  future: [] as Snapshot[],
+  _preDragRoot: null,
+  _lastTabSwitchHost: null,
+  _lastEditKey: null,
+  freeEditsDirty: false,
+  dirty: false,
+};
 const DEFAULT_VIEWPORT: ViewportTransform = { zoom: 1, panX: 0, panY: 0 };
 
 // Fetch every piece of preset-shipped artwork the tree references into the
@@ -2590,12 +2606,10 @@ export const useStore = create<State & Actions>((set, get) => {
     },
 
     loadDocument: (doc) => {
+      clearAutosave();
       set({
+        ...FRESH_SESSION,
         root: doc.root,
-        selectedSlotId: null,
-        history: [],
-        future: [],
-        _preDragRoot: null,
         collapsed: defaultCollapsed(doc.root),
         theme: doc.theme ?? defaultTheme(),
         dirty: false,
@@ -2629,12 +2643,10 @@ export const useStore = create<State & Actions>((set, get) => {
       // back to the same URL (see exportBundle) — so a failed fetch costs a
       // placeholder in the preview, never a broken panel.
       void hydratePresetArt(r);
+      clearAutosave();
       set({
+        ...FRESH_SESSION,
         root: r,
-        selectedSlotId: null,
-        history: [],
-        future: [],
-        _preDragRoot: null,
         collapsed: defaultCollapsed(r),
         editMode: stack ? "snap" : "free",
         freeEditsDirty: false,
@@ -2649,7 +2661,12 @@ export const useStore = create<State & Actions>((set, get) => {
       theme: get().theme,
     }),
 
-    markClean: () => set({ dirty: false }),
+    markClean: () => {
+      // The project now lives in a file the user holds, so the browser autosave
+      // is redundant — drop it so the next visit doesn't offer a stale restore.
+      clearAutosave();
+      set({ dirty: false });
+    },
 
     reset: () => {
       // "New" starts from the blank canvas (which now carries the dark
@@ -2660,12 +2677,10 @@ export const useStore = create<State & Actions>((set, get) => {
       const r = lockRoot(
         localizePanelText(blank ? blank.build(lang) : createStarterTemplate(lang), lang),
       );
+      clearAutosave();
       set({
+        ...FRESH_SESSION,
         root: r,
-        selectedSlotId: null,
-        history: [],
-        future: [],
-        _preDragRoot: null,
         collapsed: defaultCollapsed(r),
         theme: defaultTheme(),
         dirty: false,

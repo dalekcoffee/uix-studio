@@ -20,6 +20,7 @@ export const es: Dictionary = {
     saveProject: "💾 Guardar proyecto",
     saveProjectTip:
       "Guardar proyecto — descarga un archivo .uixstudio.json editable que podrás reabrir aquí más tarde. Este NO es el archivo de Resonite; usa Exportar para eso.",
+    unsavedTip: "Cambios sin guardar (Ctrl+S para guardar el proyecto)",
     openProject: "Abrir proyecto…",
     openProjectTip: "Abre un proyecto .uixstudio.json guardado anteriormente para seguir editando",
     exportResonite: "⬇ Exportar a Resonite",

@@ -20,6 +20,7 @@ export const ko: Dictionary = {
     saveProject: "💾 프로젝트 저장",
     saveProjectTip:
       "프로젝트 저장 — 나중에 다시 열 수 있는 편집 가능한 .uixstudio.json 파일을 내려받습니다. 이것은 Resonite 파일이 아닙니다. 그 용도로는 내보내기를 사용하세요.",
+    unsavedTip: "저장되지 않은 변경 사항 (Ctrl+S로 프로젝트 저장)",
     openProject: "프로젝트 열기…",
     openProjectTip: "이전에 저장한 .uixstudio.json 프로젝트를 열어 계속 편집합니다",
     exportResonite: "⬇ Resonite로 내보내기",

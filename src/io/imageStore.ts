@@ -24,7 +24,7 @@ let _dbPromise: Promise<IDBDatabase> | null = null;
 
 function openDb(): Promise<IDBDatabase> {
   if (_dbPromise) return _dbPromise;
-  _dbPromise = new Promise((resolve, reject) => {
+  const p = new Promise<IDBDatabase>((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
@@ -32,8 +32,24 @@ function openDb(): Promise<IDBDatabase> {
         db.createObjectStore(STORE, { keyPath: "hash" });
       }
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      // If another tab upgrades the schema, close so it isn't blocked forever.
+      req.result.onversionchange = () => {
+        req.result.close();
+        _dbPromise = null;
+      };
+      resolve(req.result);
+    };
     req.onerror = () => reject(req.error);
+    // An older tab holds the DB open and refuses the upgrade; surface it as a
+    // failure rather than hanging every image call.
+    req.onblocked = () => reject(new Error("IndexedDB upgrade blocked by another tab"));
+  });
+  _dbPromise = p.catch((err) => {
+    // Don't cache a failure: private mode / a blocked upgrade may clear up, and
+    // a permanently rejected promise would break images until a full reload.
+    _dbPromise = null;
+    throw err;
   });
   return _dbPromise;
 }
@@ -71,12 +87,17 @@ function notify() {
   for (const fn of _listeners) fn();
 }
 
+// Largest accepted image. Bytes are kept in IndexedDB and zipped into every
+// export, so an unbounded upload bloats both.
+export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+
 /**
- * Add a user-selected file to the store. Returns the stored record.
- * If a file with the same hash already exists, returns the existing one.
+ * Hash, dedupe, measure and persist image bytes. Shared by file uploads and
+ * bundled-icon fetches so both stay in lockstep. Dimensions are best-effort —
+ * Resonite re-derives them on import.
  */
-export async function addImageFile(file: File): Promise<StoredImage> {
-  const bytes = new Uint8Array(await file.arrayBuffer());
+async function putImage(blob: Blob, name: string, fallbackMime: string): Promise<StoredImage> {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
   const hash = await sha256Hex(bytes);
   const existing = await getImage(hash);
   if (existing) return existing;
@@ -84,17 +105,17 @@ export async function addImageFile(file: File): Promise<StoredImage> {
   let width = 0;
   let height = 0;
   try {
-    const dims = await getDimensions(file);
+    const dims = await getDimensions(blob);
     width = dims.width;
     height = dims.height;
   } catch {
-    // Not strictly required — Resonite re-derives dimensions on import.
+    /* undecodable here, or no dimensions available */
   }
 
   const stored: StoredImage = {
     hash,
-    name: file.name,
-    mime: file.type || "image/png",
+    name,
+    mime: blob.type || fallbackMime,
     bytes,
     width,
     height,
@@ -112,6 +133,30 @@ export async function addImageFile(file: File): Promise<StoredImage> {
 }
 
 /**
+ * Add a user-selected file to the store. Returns the stored record.
+ * If a file with the same hash already exists, returns the existing one.
+ * Rejects non-images and files over MAX_IMAGE_BYTES.
+ */
+export async function addImageFile(file: File): Promise<StoredImage> {
+  if (file.type && !file.type.startsWith("image/")) {
+    throw new Error(`"${file.name}" is not an image file.`);
+  }
+  if (file.size > MAX_IMAGE_BYTES) {
+    throw new Error(
+      `"${file.name}" is ${(file.size / 1048576).toFixed(1)} MB; the limit is ${MAX_IMAGE_BYTES / 1048576} MB.`,
+    );
+  }
+  const stored = await putImage(file, file.name, "image/png");
+  // An undecodable file (e.g. a renamed .txt with no mime) would show up as a
+  // broken thumbnail and export a corrupt asset — reject it up front.
+  if (!file.type && stored.width === 0) {
+    await deleteImage(stored.hash);
+    throw new Error(`"${file.name}" could not be read as an image.`);
+  }
+  return stored;
+}
+
+/**
  * Add a bundled app icon (served from publicDir) to the store by fetching its
  * URL. Same storage/hashing as an upload, so it bundles into the export through
  * the normal customImageHash path. Idempotent by content hash.
@@ -119,40 +164,7 @@ export async function addImageFile(file: File): Promise<StoredImage> {
 export async function addImageFromUrl(url: string, name: string): Promise<StoredImage> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to fetch ${url} (${res.status})`);
-  const blob = await res.blob();
-  const bytes = new Uint8Array(await blob.arrayBuffer());
-  const hash = await sha256Hex(bytes);
-  const existing = await getImage(hash);
-  if (existing) return existing;
-
-  let width = 0;
-  let height = 0;
-  try {
-    const dims = await getDimensions(blob);
-    width = dims.width;
-    height = dims.height;
-  } catch {
-    /* dimensions are best-effort; Resonite re-derives them on import */
-  }
-
-  const stored: StoredImage = {
-    hash,
-    name,
-    mime: blob.type || "image/png",
-    bytes,
-    width,
-    height,
-    addedAt: Date.now(),
-  };
-  const db = await openDb();
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(STORE, "readwrite");
-    tx.objectStore(STORE).put(stored);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-  notify();
-  return stored;
+  return putImage(await res.blob(), name, "image/png");
 }
 
 export async function getImage(hash: string): Promise<StoredImage | null> {
